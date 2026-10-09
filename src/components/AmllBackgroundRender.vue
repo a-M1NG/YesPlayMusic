@@ -21,7 +21,7 @@ export default {
       type: String,
       default: '',
     },
-    /** 是否正在播放 */
+    /** 是否正在播放，且歌词页面处于可见状态 */
     playing: {
       type: Boolean,
       default: false,
@@ -52,6 +52,9 @@ export default {
       this.applyAlbum(album);
     },
     playing(playing) {
+      // 调用方传入的是播放状态与歌词页可见性的合成结果：画布被隐藏时绘制没有任何意义，
+      // 停掉帧循环可以避免无谓的 GPU 提交；重新显示时 resume() 会立即请求下一帧，
+      // 所以暂停期间不会漏掉需要重绘的内容
       if (!this.background) return;
       if (playing) this.background.resume();
       else this.background.pause();
@@ -84,9 +87,12 @@ export default {
     this.background = null;
   },
   methods: {
-    applyAlbum(album) {
+    async applyAlbum(album) {
       if (!this.background || !album) return;
-      this.background.setAlbum(album);
+      // MeshGradientRenderer.setAlbum 内部已经吞掉封面拉取与解码的失败并打印错误，
+      // 但拿不到 2D 上下文或者图片尺寸为 0 时仍然会抛出，这个 Promise 因此可能变成
+      // rejected：异常继续向上传递，由调用方处理
+      await this.background.setAlbum(album);
     },
   },
 };
