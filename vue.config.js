@@ -7,6 +7,16 @@ function resolve(dir) {
 module.exports = {
   // 生产环境打包不输出 map
   productionSourceMap: false,
+  css: {
+    loaderOptions: {
+      // AMLL 的样式以 CSS 嵌套书写，而 Electron 13 用的是 Chromium 91，不认识嵌套语法，
+      // 不展开会让间奏点的圆点尺寸与颜色、逐字遮罩的透明度变量这类规则整块失效。
+      // 指定 postcss 插件会覆盖 vue-cli 的默认配置，因此这里一并把 autoprefixer 带上
+      postcss: {
+        plugins: [require('autoprefixer'), require('postcss-nesting')],
+      },
+    },
+  },
   devServer: {
     disableHostCheck: true,
     port: process.env.DEV_SERVER_PORT || 8080,
@@ -70,8 +80,37 @@ module.exports = {
       .end()
       .use('esbuild-loader')
       .loader('esbuild-loader')
-      .options({ target: 'es2015', format: "cjs" })
+      .options({ target: 'es2015', format: 'cjs' })
       .end();
+
+    // webpack 4 不认识 package.json 的 exports 字段，AMLL 的样式子路径需要手动指向实际文件
+    config.resolve.alias.set(
+      '@applemusic-like-lyrics/core/style.css',
+      resolve('node_modules/@applemusic-like-lyrics/core/dist/style.css')
+    );
+
+    // AMLL 与它依赖的 pixi 以 esnext 语法发布，webpack 4 无法解析其中的可选链、空值合并与类字段。
+    // 这里不指定 format，让 esbuild 保留每个产物原本的模块格式
+    config.module
+      .rule('amll_es_fallback')
+      .test(/\.(mjs|cjs)$/)
+      .include.add(/node_modules[\\/]@(applemusic-like-lyrics|pixi)[\\/]/)
+      .end()
+      .use('esbuild-loader')
+      .loader('esbuild-loader')
+      .options({
+        target: 'es2019',
+        // AMLL 的歌词解析模块使用了 BigInt 字面量，esbuild 没法把它降级到 ES2019，
+        // 而 webpack 4 的解析器认识 BigInt，所以这里声明目标环境支持它
+        supported: { bigint: true },
+      })
+      .end();
+
+    // webpack 4 默认把 .mjs 排在 .js 前面，会让 pixi 这类同时提供两种产物的包
+    // 在 CommonJS 代码里加载到 ESM 版本，因此把 .js 提到最前面
+    config.resolve.extensions
+      .clear()
+      .merge(['.js', '.jsx', '.vue', '.json', '.wasm', '.mjs']);
 
     // LimitChunkCountPlugin 可以通过合并块来对块进行后期处理。用以解决 chunk 包太多的问题
     config.plugin('chunkPlugin').use(webpack.optimize.LimitChunkCountPlugin, [
@@ -108,12 +147,13 @@ module.exports = {
           target: [
             {
               target: 'dmg',
-              arch: ['x64', 'arm64', 'universal'],
+              arch: ['arm64'],
             },
           ],
           artifactName: '${productName}-${os}-${version}-${arch}.${ext}',
           category: 'public.app-category.music',
           darkModeSupport: true,
+          icon: 'build/icons/icon.icns',
         },
         win: {
           target: [
@@ -187,7 +227,7 @@ module.exports = {
           .end()
           .use('esbuild-loader')
           .loader('esbuild-loader')
-          .options({ target: 'es2015', format: "cjs" })
+          .options({ target: 'es2015', format: 'cjs' })
           .end();
       },
       // 渲染线程的配置文件

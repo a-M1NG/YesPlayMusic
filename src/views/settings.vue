@@ -244,6 +244,126 @@
             <option value="dynamic">
               {{ $t('settings.lyricsBackground.dynamic') }}
             </option>
+            <option value="amll">
+              {{ $t('settings.lyricsBackground.meshGradient') }}
+            </option>
+          </select>
+        </div>
+      </div>
+      <div class="item">
+        <div class="left">
+          <div class="title"> {{ $t('settings.amllEnableSpring') }} </div>
+        </div>
+        <div class="right">
+          <div class="toggle">
+            <input
+              id="amll-enable-spring"
+              v-model="amllEnableSpring"
+              type="checkbox"
+              name="amll-enable-spring"
+            />
+            <label for="amll-enable-spring"></label>
+          </div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="left">
+          <div class="title"> {{ $t('settings.amllEnableBlur') }} </div>
+        </div>
+        <div class="right">
+          <div class="toggle">
+            <input
+              id="amll-enable-blur"
+              v-model="amllEnableBlur"
+              type="checkbox"
+              name="amll-enable-blur"
+            />
+            <label for="amll-enable-blur"></label>
+          </div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="left">
+          <div class="title"> {{ $t('settings.amllEnableScale') }} </div>
+        </div>
+        <div class="right">
+          <div class="toggle">
+            <input
+              id="amll-enable-scale"
+              v-model="amllEnableScale"
+              type="checkbox"
+              name="amll-enable-scale"
+            />
+            <label for="amll-enable-scale"></label>
+          </div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="left">
+          <div class="title"> {{ $t('settings.amllHidePassedLines') }} </div>
+        </div>
+        <div class="right">
+          <div class="toggle">
+            <input
+              id="amll-hide-passed-lines"
+              v-model="amllHidePassedLines"
+              type="checkbox"
+              name="amll-hide-passed-lines"
+            />
+            <label for="amll-hide-passed-lines"></label>
+          </div>
+        </div>
+      </div>
+      <div class="item">
+        <div class="left">
+          <div class="title"> {{ $t('settings.amllAlignPosition.text') }} </div>
+        </div>
+        <div class="right">
+          <select v-model.number="amllAlignPosition">
+            <option :value="0.35">
+              {{ $t('settings.amllAlignPosition.top') }}
+            </option>
+            <option :value="0.5">
+              {{ $t('settings.amllAlignPosition.center') }}
+            </option>
+            <option :value="0.65">
+              {{ $t('settings.amllAlignPosition.bottom') }}
+            </option>
+          </select>
+        </div>
+      </div>
+      <div class="item">
+        <div class="left">
+          <div class="title">
+            {{ $t('settings.amllBackgroundRenderScale.text') }}
+          </div>
+        </div>
+        <div class="right">
+          <select v-model.number="amllBackgroundRenderScale">
+            <option :value="0.35">
+              {{ $t('settings.amllBackgroundRenderScale.low') }}
+            </option>
+            <option :value="0.5">
+              {{ $t('settings.amllBackgroundRenderScale.medium') }}
+            </option>
+            <option :value="0.75">
+              {{ $t('settings.amllBackgroundRenderScale.high') }}
+            </option>
+            <option :value="1">
+              {{ $t('settings.amllBackgroundRenderScale.ultra') }}
+            </option>
+          </select>
+        </div>
+      </div>
+      <div class="item">
+        <div class="left">
+          <div class="title"> {{ $t('settings.amllBackgroundFPS') }} </div>
+        </div>
+        <div class="right">
+          <select v-model.number="amllBackgroundFPS">
+            <option :value="15">15 FPS</option>
+            <option :value="30">30 FPS</option>
+            <option :value="60">60 FPS</option>
           </select>
         </div>
       </div>
@@ -811,10 +931,11 @@
 import { mapState, mapActions } from 'vuex';
 import { isLooseLoggedIn, doLogout } from '@/utils/auth';
 import { auth as lastfmAuth } from '@/api/lastfm';
-import { 
-  changeAppearance, 
-  changeThemeColor, 
-  bytesToSize } from '@/utils/common';
+import {
+  changeAppearance,
+  changeThemeColor,
+  bytesToSize,
+} from '@/utils/common';
 import { countDBSize, clearDB } from '@/utils/db';
 import pkg from '../../package.json';
 
@@ -1087,6 +1208,83 @@ export default {
       set(value) {
         this.$store.commit('updateSettings', {
           key: 'lyricsBackground',
+          value,
+        });
+      },
+    },
+    amllEnableSpring: {
+      get() {
+        return this.settings.amllEnableSpring;
+      },
+      set(value) {
+        this.$store.commit('updateSettings', {
+          key: 'amllEnableSpring',
+          value,
+        });
+      },
+    },
+    amllEnableBlur: {
+      get() {
+        return this.settings.amllEnableBlur;
+      },
+      set(value) {
+        this.$store.commit('updateSettings', {
+          key: 'amllEnableBlur',
+          value,
+        });
+      },
+    },
+    amllEnableScale: {
+      get() {
+        return this.settings.amllEnableScale;
+      },
+      set(value) {
+        this.$store.commit('updateSettings', {
+          key: 'amllEnableScale',
+          value,
+        });
+      },
+    },
+    amllAlignPosition: {
+      get() {
+        return this.settings.amllAlignPosition;
+      },
+      set(value) {
+        this.$store.commit('updateSettings', {
+          key: 'amllAlignPosition',
+          value,
+        });
+      },
+    },
+    amllBackgroundRenderScale: {
+      get() {
+        return this.settings.amllBackgroundRenderScale;
+      },
+      set(value) {
+        this.$store.commit('updateSettings', {
+          key: 'amllBackgroundRenderScale',
+          value,
+        });
+      },
+    },
+    amllBackgroundFPS: {
+      get() {
+        return this.settings.amllBackgroundFPS;
+      },
+      set(value) {
+        this.$store.commit('updateSettings', {
+          key: 'amllBackgroundFPS',
+          value,
+        });
+      },
+    },
+    amllHidePassedLines: {
+      get() {
+        return this.settings.amllHidePassedLines;
+      },
+      set(value) {
+        this.$store.commit('updateSettings', {
+          key: 'amllHidePassedLines',
           value,
         });
       },
