@@ -29,6 +29,14 @@
         class="gradient-background"
         :style="{ background }"
       ></div>
+      <AmllBackgroundRender
+        v-if="settings.lyricsBackground === 'amll'"
+        :album="bgImageUrl"
+        :playing="player.playing"
+        :has-lyric="!noLyric"
+        :fps="Number(settings.amllBackgroundFPS) || 30"
+        :render-scale="Number(settings.amllBackgroundRenderScale) || 0.5"
+      />
 
       <div class="left-side">
         <div>
@@ -229,42 +237,23 @@
       </div>
       <div class="right-side">
         <transition name="slide-fade">
-          <div
-            v-show="!noLyric"
-            ref="lyricsContainer"
-            class="lyrics-container"
-            :style="lyricFontSize"
-          >
-            <div id="line-1" class="line"></div>
-            <div
-              v-for="(line, index) in lyricToShow"
-              :id="`line${index}`"
-              :key="index"
-              class="line"
-              :class="{
-                highlight: highlightLyricIndex === index,
-              }"
-              @click="clickLyricLine(line.time)"
-              @dblclick="clickLyricLine(line.time, true)"
-            >
-              <div class="content">
-                <span
-                  v-if="line.contents[0]"
-                  @click.right="openLyricMenu($event, line, 0)"
-                  >{{ line.contents[0] }}</span
-                >
-                <br />
-                <span
-                  v-if="
-                    line.contents[1] &&
-                    $store.state.settings.showLyricsTranslation
-                  "
-                  class="translation"
-                  @click.right="openLyricMenu($event, line, 1)"
-                  >{{ line.contents[1] }}</span
-                >
-              </div>
-            </div>
+          <div v-show="!noLyric" class="lyrics-container">
+            <AmllLyricPlayer
+              ref="amllLyricPlayer"
+              :lines="lyricToShow"
+              :time-source="getPlaybackTime"
+              :playing="player.playing"
+              :disabled="!showLyrics"
+              :font-size="Number(settings.lyricFontSize) || 28"
+              :align-position="Number(settings.amllAlignPosition) || 0.5"
+              :enable-spring="settings.amllEnableSpring"
+              :enable-blur="settings.amllEnableBlur"
+              :enable-scale="settings.amllEnableScale"
+              :hide-passed-lines="settings.amllHidePassedLines"
+              @line-click="onLyricLineClick"
+              @line-dblclick="onLyricLineDblClick"
+              @line-contextmenu="onLyricLineContextMenu"
+            />
             <ContextMenu v-if="!noLyric" ref="lyricMenu">
               <div class="item" @click="copyLyric(false)">{{
                 $t('contextMenu.copyLyric')
@@ -272,7 +261,7 @@
               <div
                 v-if="
                   rightClickLyric &&
-                  rightClickLyric.contents[1] &&
+                  rightClickLyric.hasTranslation &&
                   $store.state.settings.showLyricsTranslation
                 "
                 class="item"
@@ -304,10 +293,17 @@
 
 import { mapState, mapMutations, mapActions } from 'vuex';
 import VueSlider from 'vue-slider-component';
+import AmllBackgroundRender from '@/components/AmllBackgroundRender.vue';
+import AmllLyricPlayer from '@/components/AmllLyricPlayer.vue';
 import ContextMenu from '@/components/ContextMenu.vue';
 import { formatTrackTime } from '@/utils/common';
 import { getLyric, getCloudLyric } from '@/api/track';
-import { lyricParser, copyLyric, parseLyric } from '@/utils/lyrics';
+import { copyLyric } from '@/utils/lyrics';
+import {
+  parseNeteaseLyric,
+  filterNeteaseLyric,
+  getLyricLineContent,
+} from '@/utils/amllLyrics';
 import ButtonIcon from '@/components/ButtonIcon.vue';
 import * as Vibrant from 'node-vibrant/dist/vibrant.worker.min.js';
 import Color from 'color';
@@ -321,20 +317,22 @@ export default {
     VueSlider,
     ButtonIcon,
     ContextMenu,
+    AmllLyricPlayer,
+    AmllBackgroundRender,
   },
   data() {
     return {
-      lyricsInterval: null,
+      // AMLL 的歌词行，时间单位为毫秒
       lyric: [],
-      tlyric: [],
-      romalyric: [],
+      hasTranslation: false,
+      hasRomanization: false,
       lyricType: 'translation', // or 'romaPronunciation'
-      highlightLyricIndex: -1,
-      minimize: true,
       background: '',
       date: this.formatTime(new Date()),
       isFullscreen: !!document.fullscreenElement,
       rightClickLyric: null,
+      // 进行中的歌词请求序号，0 表示当前没有请求在等待结果
+      lyricRequestToken: 0,
     };
   },
   computed: {
@@ -357,82 +355,26 @@ export default {
       return this.player.currentTrack?.al?.picUrl + '?param=512y512';
     },
     isShowLyricTypeSwitch() {
-      return this.romalyric.length > 0 && this.tlyric.length > 0;
+      return this.hasRomanization && this.hasTranslation;
     },
+    /**
+     * 交给 AMLL 播放的歌词行。
+     *
+     * AMLL 的歌词行同时带有翻译与音译字段，这里按页面上选择的类型只保留其中一种。
+     * AMLL 要求歌词行传入后不得再修改，因此每次都生成新的对象。
+     */
     lyricToShow() {
-      return this.lyricType === 'translation'
-        ? this.lyricWithTranslation
-        : this.lyricWithRomaPronunciation;
-    },
-    lyricWithTranslation() {
-      let ret = [];
-      // 空内容的去除
-      const lyricFiltered = this.lyric.filter(({ content }) =>
-        Boolean(content)
-      );
-      // content统一转换数组形式
-      if (lyricFiltered.length) {
-        lyricFiltered.forEach(l => {
-          const { rawTime, time, content } = l;
-          const lyricItem = { time, content, contents: [content] };
-          const sameTimeTLyric = this.tlyric.find(
-            ({ rawTime: tLyricRawTime }) => tLyricRawTime === rawTime
-          );
-          if (sameTimeTLyric) {
-            const { content: tLyricContent } = sameTimeTLyric;
-            if (content) {
-              lyricItem.contents.push(tLyricContent);
-            }
-          }
-          ret.push(lyricItem);
-        });
-      } else {
-        ret = lyricFiltered.map(({ time, content }) => ({
-          time,
-          content,
-          contents: [content],
-        }));
-      }
-      return ret;
-    },
-    lyricWithRomaPronunciation() {
-      let ret = [];
-      // 空内容的去除
-      const lyricFiltered = this.lyric.filter(({ content }) =>
-        Boolean(content)
-      );
-      // content统一转换数组形式
-      if (lyricFiltered.length) {
-        lyricFiltered.forEach(l => {
-          const { rawTime, time, content } = l;
-          const lyricItem = { time, content, contents: [content] };
-          const sameTimeRomaLyric = this.romalyric.find(
-            ({ rawTime: tLyricRawTime }) => tLyricRawTime === rawTime
-          );
-          if (sameTimeRomaLyric) {
-            const { content: romaLyricContent } = sameTimeRomaLyric;
-            if (content) {
-              lyricItem.contents.push(romaLyricContent);
-            }
-          }
-          ret.push(lyricItem);
-        });
-      } else {
-        ret = lyricFiltered.map(({ time, content }) => ({
-          time,
-          content,
-          contents: [content],
-        }));
-      }
-      return ret;
-    },
-    lyricFontSize() {
-      return {
-        fontSize: `${this.$store.state.settings.lyricFontSize || 28}px`,
-      };
+      const showTranslation =
+        this.lyricType === 'translation' && this.settings.showLyricsTranslation;
+      const showRomanization = this.lyricType === 'romaPronunciation';
+      return this.lyric.map(line => ({
+        ...line,
+        translatedLyric: showTranslation ? line.translatedLyric : '',
+        romanLyric: showRomanization ? line.romanLyric : '',
+      }));
     },
     noLyric() {
-      return this.lyric.length == 0;
+      return this.lyric.length === 0;
     },
     artist() {
       return this.currentTrack?.ar
@@ -443,7 +385,11 @@ export default {
       return this.currentTrack?.al || { id: 0, name: 'unknown' };
     },
     theme() {
-      return this.settings.lyricsBackground === true ? 'dark' : 'auto';
+      // 渐变背景与 AMLL 动态背景都是深色底，歌词页需要跟随使用深色主题
+      return this.settings.lyricsBackground === true ||
+        this.settings.lyricsBackground === 'amll'
+        ? 'dark'
+        : 'auto';
     },
   },
   watch: {
@@ -452,13 +398,8 @@ export default {
       this.getCoverColor();
     },
     showLyrics(show) {
-      if (show) {
-        this.setLyricsInterval();
-        this.$store.commit('enableScrolling', false);
-      } else {
-        clearInterval(this.lyricsInterval);
-        this.$store.commit('enableScrolling', true);
-      }
+      // 歌词页面隐藏时停止滚动整个页面
+      this.$store.commit('enableScrolling', !show);
     },
   },
   created() {
@@ -479,9 +420,8 @@ export default {
     if (this.timer) {
       clearInterval(this.timer);
     }
-  },
-  destroyed() {
-    clearInterval(this.lyricsInterval);
+    // 组件销毁后到达的歌词结果没有可以提交的对象
+    this.lyricRequestToken = 0;
   },
   methods: {
     ...mapMutations(['toggleLyrics', 'updateModal']),
@@ -542,68 +482,56 @@ export default {
         this.player.playNextTrack();
       }
     },
-    getLyric() {
-      if (!this.currentTrack.id) return;
+    async getLyric() {
+      const trackID = this.currentTrack.id;
+      if (!trackID) return false;
+      // 切歌后立即清空，上一首的歌词不会因为新请求尚未返回而留在屏幕上
+      this.setLyric([]);
+      const requestToken = ++this.lyricRequestToken;
+      // 歌词行只有在仍然属于当前曲目且没有被更晚的请求取代时才提交；
+      // 曲目标识相同的两次请求靠本次请求的序号区分，先发出的结果一律丢弃
+      const applyLyric = lyric => {
+        if (this.currentTrack.id !== trackID) return false;
+        if (this.lyricRequestToken !== requestToken) return false;
+        this.setLyric(lyric);
+        if (this.lyric.length === 0) return false;
+        // 提交成功后本次请求不再是进行中的请求，后续的切换才能让它失效
+        this.lyricRequestToken = 0;
+        return true;
+      };
       if (
         this.currentTrack.pc !== null &&
         this.currentTrack.cd === null &&
         this.$store.state.data.user?.userId
       ) {
         //云盘未设置关联的歌曲获取其内置歌词
-        return getCloudLyric(
-          this.currentTrack.id,
+        const data = await getCloudLyric(
+          trackID,
           this.$store.state.data.user?.userId
-        ).then(data => {
-          this.tlyric = [];
-          this.romalyric = [];
-          this.lyric = data?.lrc?.length > 0 ? parseLyric(data.lrc) : [];
-          this.lyricType = 'translation';
-          return true;
-        });
+        );
+        // 云盘歌词接口直接返回歌词文本，与普通歌词接口的嵌套结构不同
+        return applyLyric(
+          data?.lrc ? parseNeteaseLyric({ lrc: { lyric: data.lrc } }) : []
+        );
       }
-      return getLyric(this.currentTrack.id).then(data => {
-        if (!data?.lrc?.lyric) {
-          this.lyric = [];
-          this.tlyric = [];
-          this.romalyric = [];
-          return false;
-        } else {
-          let { lyric, tlyric, romalyric } = lyricParser(data);
-          lyric = lyric.filter(
-            l => !/^作(词|曲)\s*(:|：)\s*无$/.exec(l.content)
-          );
-          let includeAM =
-            lyric.length <= 10 &&
-            lyric.map(l => l.content).includes('纯音乐，请欣赏');
-          if (includeAM) {
-            let reg = /^作(词|曲)\s*(:|：)\s*/;
-            let author = this.currentTrack?.ar[0]?.name;
-            lyric = lyric.filter(l => {
-              let regExpArr = l.content.match(reg);
-              return (
-                !regExpArr || l.content.replace(regExpArr[0], '') !== author
-              );
-            });
-          }
-          if (lyric.length === 1 && includeAM) {
-            this.lyric = [];
-            this.tlyric = [];
-            this.romalyric = [];
-            return false;
-          } else {
-            this.lyric = lyric;
-            this.tlyric = tlyric;
-            this.romalyric = romalyric;
-            if (tlyric.length * romalyric.length > 0) {
-              this.lyricType = 'translation';
-            } else {
-              this.lyricType =
-                lyric.length > 0 ? 'translation' : 'romaPronunciation';
-            }
-            return true;
-          }
-        }
-      });
+      const data = await getLyric(trackID);
+      return applyLyric(
+        data?.lrc?.lyric
+          ? filterNeteaseLyric(
+              parseNeteaseLyric(data),
+              this.currentTrack?.ar[0]?.name
+            )
+          : []
+      );
+    },
+    setLyric(lyric) {
+      this.lyric = lyric;
+      this.hasTranslation = lyric.some(line => Boolean(line.translatedLyric));
+      this.hasRomanization = lyric.some(line => Boolean(line.romanLyric));
+      this.lyricType =
+        this.hasTranslation || !this.hasRomanization
+          ? 'translation'
+          : 'romaPronunciation';
     },
     switchLyricType() {
       this.lyricType =
@@ -612,55 +540,31 @@ export default {
     formatTrackTime(value) {
       return formatTrackTime(value);
     },
-    clickLyricLine(value, startPlay = false) {
-      // TODO: 双击选择还会选中文字，考虑搞个右键菜单复制歌词
-      let jumpFlag = false;
-      this.lyric.filter(function (item) {
-        if (item.content == '纯音乐，请欣赏') {
-          jumpFlag = true;
-        }
-      });
-      if (window.getSelection().toString().length === 0 && !jumpFlag) {
-        this.player.seek(value);
-      }
-      if (startPlay === true) {
-        this.player.play();
-      }
+    /** 提供给 AMLL 播放组件的播放进度，单位为毫秒 */
+    getPlaybackTime() {
+      return (this.player.seek(null, false) ?? 0) * 1000;
     },
-    openLyricMenu(e, lyric, idx) {
-      this.rightClickLyric = { ...lyric, idx };
-      this.$refs.lyricMenu.openMenu(e);
-      e.preventDefault();
+    onLyricLineClick({ line }) {
+      this.player.seek(line.startTime / 1000);
+    },
+    onLyricLineDblClick({ line }) {
+      this.player.seek(line.startTime / 1000);
+      this.player.play();
+    },
+    onLyricLineContextMenu({ line, nativeEvent }) {
+      this.rightClickLyric = {
+        content: getLyricLineContent(line),
+        translation: line.translatedLyric,
+        hasTranslation: Boolean(line.translatedLyric),
+      };
+      this.$refs.lyricMenu.openMenu(nativeEvent);
     },
     copyLyric(withTranslation) {
-      if (this.rightClickLyric) {
-        const idx = this.rightClickLyric.idx;
-        if (!withTranslation) {
-          copyLyric(this.rightClickLyric.contents[idx]);
-        } else {
-          copyLyric(this.rightClickLyric.contents.join(' '));
-        }
-      }
-    },
-    setLyricsInterval() {
-      this.lyricsInterval = setInterval(() => {
-        const progress = this.player.seek(null, false) ?? 0;
-        let oldHighlightLyricIndex = this.highlightLyricIndex;
-        this.highlightLyricIndex = this.lyric.findIndex((l, index) => {
-          const nextLyric = this.lyric[index + 1];
-          return (
-            progress >= l.time && (nextLyric ? progress < nextLyric.time : true)
-          );
-        });
-        if (oldHighlightLyricIndex !== this.highlightLyricIndex) {
-          const el = document.getElementById(`line${this.highlightLyricIndex}`);
-          if (el)
-            el.scrollIntoView({
-              behavior: 'smooth',
-              block: 'center',
-            });
-        }
-      }, 50);
+      if (!this.rightClickLyric) return;
+      const { content, translation } = this.rightClickLyric;
+      copyLyric(
+        withTranslation && translation ? `${content} ${translation}` : content
+      );
     },
     moveToFMTrash() {
       this.player.moveToFMTrash();
@@ -962,77 +866,11 @@ export default {
   z-index: 0;
 
   .lyrics-container {
+    position: relative;
     height: 100%;
-    display: flex;
-    flex-direction: column;
     padding-left: 78px;
     max-width: 460px;
-    overflow-y: auto;
     transition: 0.5s;
-    scrollbar-width: none; // firefox
-
-    .line {
-      margin: 2px 0;
-      padding: 12px 18px;
-      transition: 0.5s;
-      border-radius: 12px;
-
-      &:hover {
-        background: var(--color-secondary-bg-for-transparent);
-      }
-
-      .content {
-        transform-origin: center left;
-        transform: scale(0.95);
-        transition: all 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-        user-select: none;
-
-        span {
-          opacity: 0.28;
-          cursor: default;
-          font-size: 1em;
-          transition: all 0.35s cubic-bezier(0.25, 0.46, 0.45, 0.94);
-        }
-
-        span.translation {
-          opacity: 0.2;
-          font-size: 0.925em;
-        }
-      }
-    }
-
-    .line#line-1:hover {
-      background: unset;
-    }
-
-    .translation {
-      margin-top: 0.1em;
-    }
-
-    .highlight div.content {
-      transform: scale(1);
-
-      span {
-        opacity: 0.98;
-        display: inline-block;
-      }
-
-      span.translation {
-        opacity: 0.65;
-      }
-    }
-  }
-
-  ::-webkit-scrollbar {
-    display: none;
-  }
-
-  .lyrics-container .line:first-child {
-    margin-top: 50vh;
-  }
-
-  .lyrics-container .line:last-child {
-    margin-bottom: calc(50vh - 128px);
   }
 }
 

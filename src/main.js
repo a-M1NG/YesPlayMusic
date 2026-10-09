@@ -1,3 +1,8 @@
+// AMLL 的歌词解析模块用到 Array.prototype.findLast（Chrome 97 起才有），
+// 而 Electron 13 是 Chromium 91；node_modules 里的代码不经过 babel 的
+// useBuiltIns: 'usage' 处理，缺少的补丁需要在这里显式引入，
+// 否则没有逐字歌词的歌曲在解析 LRC 时直接抛错，歌词页只会显示暂无歌词
+import 'core-js/actual/array/find-last';
 import Vue from 'vue';
 import VueGtag from 'vue-gtag';
 import App from './App.vue';

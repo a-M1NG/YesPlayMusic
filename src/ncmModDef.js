@@ -364,6 +364,13 @@ module.exports = [
     route: '/mv/all',
     module: require('@neteaseapireborn/api/module/mv_all'),
   },
+  // 必须排在 /lyric 之前：Express 的 app.use 按注册顺序做前缀匹配，
+  // 排在后面的话 /lyric 会先把 /lyric/new 接走，逐字歌词就拿不到了
+  {
+    identifier: 'lyric_new',
+    route: '/lyric/new',
+    module: require('@neteaseapireborn/api/module/lyric_new'),
+  },
   {
     identifier: 'lyric',
     route: '/lyric',

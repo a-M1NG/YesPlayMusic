@@ -1,12 +1,7 @@
 import store from '@/store';
 import request from '@/utils/request';
 import { mapTrackPlayableStatus } from '@/utils/common';
-import {
-  cacheTrackDetail,
-  getTrackDetailFromCache,
-  cacheLyric,
-  getLyricFromCache,
-} from '@/utils/db';
+import { cacheTrackDetail, getTrackDetailFromCache } from '@/utils/db';
 
 /**
  * 获取音乐 url
@@ -71,26 +66,16 @@ export function getTrackDetail(ids) {
 /**
  * 获取歌词
  * 说明 : 调用此接口 , 传入音乐 id 可获得对应音乐的歌词 ( 不需要登录 )
+ * 使用新版接口以取得逐字歌词 yrc
  * @param {number} id - 音乐 id
  */
 export function getLyric(id) {
-  const fetchLatest = () => {
-    return request({
-      url: '/lyric',
-      method: 'get',
-      params: {
-        id,
-      },
-    }).then(result => {
-      cacheLyric(id, result);
-      return result;
-    });
-  };
-
-  fetchLatest();
-
-  return getLyricFromCache(id).then(result => {
-    return result ?? fetchLatest();
+  return request({
+    url: '/lyric/new',
+    method: 'get',
+    params: {
+      id,
+    },
   });
 }
 
@@ -100,30 +85,19 @@ export function getLyric(id) {
  * @param {number} userId - 用户 id
  */
 export function getCloudLyric(songId, userId) {
-  const fetchLatest = () => {
-    return request({
-      url: '/api',
-      method: 'get',
-      params: {
-        uri: `/api/cloud/lyric/get`,
-        data: {
-          songId,
-          userId,
-          lv: '-1',
-          kv: '-1',
-        },
-        crypto: 'eapi',
+  return request({
+    url: '/api',
+    method: 'get',
+    params: {
+      uri: `/api/cloud/lyric/get`,
+      data: {
+        songId,
+        userId,
+        lv: '-1',
+        kv: '-1',
       },
-    }).then(result => {
-      cacheLyric(songId, result);
-      return result;
-    });
-  };
-
-  fetchLatest();
-
-  return getLyricFromCache(songId).then(result => {
-    return result ?? fetchLatest();
+      crypto: 'eapi',
+    },
   });
 }
 
