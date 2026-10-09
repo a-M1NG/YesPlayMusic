@@ -130,29 +130,69 @@ export function getLyricLineContent(line) {
 }
 
 /**
+ * 翻译、音译歌词与主歌词来自接口的不同字段，两者的时间轴只在部分行上完全相等：
+ * 语料里开始时间与主歌词行不等的辅助行时间差中位数 244ms、p75 470ms、p90 810ms，
+ * 取 500ms 作为上限既能配上绝大多数同一句歌词，又不会够到相邻的一句。
+ * 容差同时不得超过主歌词行时长的一半，否则一句短歌词会越过自己的结束时间
+ * 去取下一句的翻译，因此实际窗口取两者中较小的值。
+ */
+const maximumAuxiliaryMatchGap = 500;
+
+/**
  * 按开始时间把翻译、音译歌词合并到主歌词行上。
  *
- * 同一时间可能出现多行歌词（例如开头的制作人员名单），
- * 因此每个时间点维护一个队列，按出现的先后顺序依次取用。
+ * 两边的开始时间都不完全相等，所以按时间顺序为每条主歌词行挑选窗口内时间最接近的辅助行。
+ * 主歌词行按开始时间升序处理，辅助行同样排序后用另一个游标推进：
+ * 落在「主歌词行开始时间减去容差上限」之前的辅助行配不上当前行，也配不上开始时间更晚的行，
+ * 可以直接跳过，不必为每条主歌词行从头扫描。
+ *
+ * 同一时间可能出现多行歌词（例如开头的制作人员名单），这些行的距离相同，
+ * 取距离时用严格小于比较，因此保留先出现的那条，按出现顺序依次取用。
+ * 一条辅助行只能写入一条主歌词行，写入后从候选里移除。
  *
  * @param {import('@applemusic-like-lyrics/core').LyricLine[]} lines 主歌词行
  * @param {import('@applemusic-like-lyrics/core').LyricLine[]} auxiliaryLines 辅助歌词行
  * @param {'translatedLyric' | 'romanLyric'} field 要写入的字段
  */
 function mergeAuxiliaryLines(lines, auxiliaryLines, field) {
-  const pending = new Map();
+  const candidates = [];
   for (const auxiliary of auxiliaryLines) {
     const content = getLyricLineContent(auxiliary);
     if (!content) continue;
-    const time = Math.round(auxiliary.startTime);
-    const queue = pending.get(time);
-    if (queue) queue.push(content);
-    else pending.set(time, [content]);
+    candidates.push({ content, time: auxiliary.startTime });
   }
-  for (const line of lines) {
-    const queue = pending.get(Math.round(line.startTime));
-    if (!queue?.length) continue;
-    line[field] = queue.shift();
+  // Array.prototype.sort 是稳定排序，同一时间的辅助行保持接口下发的先后顺序
+  candidates.sort((a, b) => a.time - b.time);
+  const orderedLines = [...lines].sort((a, b) => a.startTime - b.startTime);
+
+  let cursor = 0;
+  for (const line of orderedLines) {
+    const gap = Math.min(
+      (line.endTime - line.startTime) / 2,
+      maximumAuxiliaryMatchGap
+    );
+    while (
+      cursor < candidates.length &&
+      candidates[cursor].time < line.startTime - maximumAuxiliaryMatchGap
+    ) {
+      cursor += 1;
+    }
+    let best = -1;
+    for (let index = cursor; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      if (candidate.time > line.startTime + gap) break;
+      if (candidate.time < line.startTime - gap) continue;
+      if (
+        best === -1 ||
+        Math.abs(candidate.time - line.startTime) <
+          Math.abs(candidates[best].time - line.startTime)
+      ) {
+        best = index;
+      }
+    }
+    if (best === -1) continue;
+    line[field] = candidates[best].content;
+    candidates.splice(best, 1);
   }
 }
 
@@ -178,7 +218,7 @@ export function parseNeteaseLyric(payload) {
 
   mergeAuxiliaryLines(
     usableLines,
-    parseLyricText(payload?.ytlyric?.lyric || payload?.tlyric?.lyric),
+    parseLyricText(payload?.ytlrc?.lyric || payload?.tlyric?.lyric),
     'translatedLyric'
   );
   mergeAuxiliaryLines(
