@@ -32,7 +32,7 @@
       <AmllBackgroundRender
         v-if="settings.lyricsBackground === 'amll'"
         :album="bgImageUrl"
-        :playing="player.playing"
+        :playing="player.playing && showLyrics"
         :has-lyric="!noLyric"
         :fps="Number(settings.amllBackgroundFPS) || 30"
         :render-scale="Number(settings.amllBackgroundRenderScale) || 0.5"
@@ -243,7 +243,7 @@
               :lines="lyricToShow"
               :time-source="getPlaybackTime"
               :playing="player.playing"
-              :disabled="!showLyrics"
+              :disabled="!showLyrics || noLyric"
               :font-size="Number(settings.lyricFontSize) || 28"
               :align-position="Number(settings.amllAlignPosition) || 0.5"
               :enable-spring="settings.amllEnableSpring"
@@ -403,6 +403,9 @@ export default {
     },
   },
   created() {
+    // 播放时间记忆化的缓存字段，逐帧都会读写，放在实例上可以避开 data 的响应式追踪
+    this.playbackTimeSeconds = NaN;
+    this.playbackTimeMs = 0;
     this.getLyric();
     this.getCoverColor();
     this.initDate();
@@ -542,7 +545,13 @@ export default {
     },
     /** 提供给 AMLL 播放组件的播放进度，单位为毫秒 */
     getPlaybackTime() {
-      return (this.player.seek(null, false) ?? 0) * 1000;
+      const seconds = this.player.seek(null, false) ?? 0;
+      // AMLL 在一帧之内会多次取样，同一毫秒里 seek 的结果不会变化，
+      // 命中缓存可以省掉重复的 seek 调用与重复换算
+      if (seconds === this.playbackTimeSeconds) return this.playbackTimeMs;
+      this.playbackTimeSeconds = seconds;
+      this.playbackTimeMs = seconds * 1000;
+      return this.playbackTimeMs;
     },
     onLyricLineClick({ line }) {
       this.player.seek(line.startTime / 1000);
