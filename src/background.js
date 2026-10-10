@@ -294,6 +294,19 @@ class Background {
   }
 
   handleWindowEvents() {
+    // Win11 + Electron 13 最小化时 document.hidden 有时仍为 false，
+    // 使用原生窗口事件补充可见性，明确释放隐藏的歌词与图形资源。
+    const syncVisibility = () => {
+      if (!this.window || this.window.isDestroyed()) return;
+      this.window.webContents.send(
+        'windowVisibility',
+        this.window.isVisible() && !this.window.isMinimized()
+      );
+    };
+    for (const event of ['minimize', 'restore', 'hide', 'show']) {
+      this.window.on(event, syncVisibility);
+    }
+    this.window.webContents.on('did-finish-load', syncVisibility);
     this.window.once('ready-to-show', () => {
       log('window ready-to-show event');
       this.window.show();
@@ -477,7 +490,7 @@ class Background {
     });
 
     if (!isMac) {
-      app.on('second-instance', (e, cl, wd) => {
+      app.on('second-instance', () => {
         if (this.window) {
           this.window.show();
           if (this.window.isMinimized()) {
