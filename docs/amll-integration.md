@@ -1,6 +1,6 @@
 # AMLL 歌词整合
 
-本文记录 YesPlayMusic 分支 `amll-lyrics-integration` 上这次歌词整合的范围、数据链路、组件接口、翻译合并规则、性能数据、构建方式与已知限制。文中引用的文件都以该分支的工作树为准。
+本文记录 YesPlayMusic 这次歌词整合的范围、数据链路、组件接口、翻译合并规则、性能数据、构建方式与已知限制。文中引用的文件以 `master` 的工作树为准。
 
 ## 目标与范围
 
@@ -160,9 +160,10 @@ Chromium 91 不支持无前缀 `mask-image`，AMLL 因此退回 `CalcMaskAnimato
 
 ## 构建与环境
 
-项目 `.nvmrc` 写的是 Node 14，devenv 使用 Node 16；用 Node 17 及以上构建时，webpack 4 的压缩环节需要 `NODE_OPTIONS=--openssl-legacy-provider`。electron-builder 默认从 GitHub 下载对应版本的 Electron，网络不通时可以先把压缩包放进任意本地目录，再用 `ELECTRON_CACHE` 指过去：
+项目要求 Node 22.12 以上，`.nvmrc` 与 devenv 都用 Node 22：`@applemusic-like-lyrics/core` 把测试工具 `vitest` 4 列为运行时依赖，它要求 Node 20 以上；`resolutions` 里把 `@vue/cli-shared-utils` 钉住的 `@achrinza/node-ipc` 9.2.2 提到 9.2.10，9.2.2 的 `engines` 只声明到 Node 17。webpack 4 的压缩环节在 Node 17 以上需要 `NODE_OPTIONS=--openssl-legacy-provider`。electron-builder 默认从 GitHub 下载对应版本的 Electron，网络不通时可以先把压缩包放进任意本地目录，再用 `ELECTRON_CACHE` 指过去：
 
 ```sh
+yarn install
 NODE_OPTIONS=--openssl-legacy-provider npx vue-cli-service electron:build -p never -m
 ```
 
