@@ -1,8 +1,4 @@
 { pkgs, lib, config, inputs, ... }:
-
-let
-  nodejs16 = import inputs.nodejs16 { system = pkgs.stdenv.system; };
-in
 {
   # https://devenv.sh/basics/
   env.GREET = "devenv";
@@ -14,7 +10,7 @@ in
 
   # https://devenv.sh/languages/
   languages.javascript.enable = true;
-  languages.javascript.package = nodejs16.pkgs.nodejs_16;
+  languages.javascript.package = pkgs.nodejs_22;
   languages.javascript.corepack.enable = true;
   # languages.rust.enable = true;
 

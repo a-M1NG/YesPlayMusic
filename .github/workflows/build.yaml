@@ -73,8 +73,9 @@ jobs:
       - name: 安装 Node.js 与 Yarn
         uses: actions/setup-node@v4
         with:
-          # webpack 4 在 Node 17 以上需要 --openssl-legacy-provider，这里按项目 engines 用 Node 16
-          node-version: 16
+          # 项目 engines 要求 Node 22.12 以上：@applemusic-like-lyrics/core 把测试工具 vitest 4 列为
+          # 运行时依赖，它要求 Node 20 以上，Node 16 完成不了安装
+          node-version: 22
           cache: 'yarn'
 
       - name: 安装 Linux 打包工具
@@ -122,7 +123,11 @@ jobs:
             @unblockneteasemusic/rust-napi-linux-arm64-gnu@${{ steps.unm.outputs.version }} \
             @unblockneteasemusic/rust-napi-linux-arm-gnueabihf@${{ steps.unm.outputs.version }}
 
+      # webpack 4 的压缩环节在 Node 17 以上要用 OpenSSL 的旧算法，否则打包时报
+      # error:0308010C:digital envelope routines::unsupported
       - name: 编译 ${{ matrix.name }}
+        env:
+          NODE_OPTIONS: --openssl-legacy-provider
         run: ${{ matrix.build }}
 
       - name: 上传 ${{ matrix.name }} 产物

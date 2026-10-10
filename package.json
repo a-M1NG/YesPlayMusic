@@ -23,7 +23,7 @@
   },
   "main": "background.js",
   "engines": {
-    "node": "14 || 16"
+    "node": ">=22.12.0"
   },
   "dependencies": {
     "@applemusic-like-lyrics/core": "^0.6.0",
@@ -110,7 +110,8 @@
   "resolutions": {
     "icon-gen": "3.0.0",
     "degenerator": "2.2.0",
-    "electron-builder": "^23.0.0"
+    "electron-builder": "^23.0.0",
+    "@achrinza/node-ipc": "9.2.10"
   },
   "eslintConfig": {
     "root": true,

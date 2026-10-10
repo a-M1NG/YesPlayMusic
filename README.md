@@ -297,7 +297,7 @@ API 源代码来自 [Binaryify/NeteaseCloudMusicApi](https://github.com/Binaryif
 
 ## 🎤 AMLL 歌词整合
 
-本仓库是 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic) 的分支。`master` 与上游 `df075cc` 完全一致；本次整合的全部工作位于 `amll-lyrics-integration` 分支，起点打有 `backup/pre-restructure` 标签。
+本仓库是 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic) 的分支，歌词整合的改动都落在 `master` 上，合并前的上游状态是 `df075cc`。
 
 这次整合做的事情：
 
@@ -326,6 +326,7 @@ git submodule update --init
 ### 构建安装包
 
 ```sh
+yarn install
 npx vue-cli-service electron:build -p never -m    # macOS
 npx vue-cli-service electron:build -p never -w    # Windows
 npx vue-cli-service electron:build -p never -l    # Linux
@@ -333,7 +334,7 @@ npx vue-cli-service electron:build -p never -l    # Linux
 
 macOS 目标要产出哪些架构由 [vue.config.js](vue.config.js) 里 `mac.target` 的 `arch` 列表决定，当前是 x64、arm64、universal 三种，命令行的 `--arm64` 这类参数只会追加、不会收窄；本地只想出一种时把那个列表改小。
 
-项目 `.nvmrc` 与 devenv 指定 Node 14/16；用 Node 17 及以上构建时，webpack 4 的压缩环节需要额外的 `NODE_OPTIONS=--openssl-legacy-provider`。electron-builder 默认从 GitHub 下载对应版本的 Electron，网络不通时可以先把压缩包放进一个本地目录，再用 `ELECTRON_CACHE=<目录>` 指过去。
+项目要求 Node 22.12 以上，`.nvmrc` 与 devenv 都用 Node 22：`@applemusic-like-lyrics/core` 把测试工具 `vitest` 4 列为运行时依赖，它要求 Node 20 以上，Node 16 完成不了安装；`resolutions` 里把 `@vue/cli-shared-utils` 钉住的 `@achrinza/node-ipc` 9.2.2 提到 9.2.10，那个版本的 `engines` 只声明到 Node 17。webpack 4 的压缩环节在 Node 17 以上需要 `NODE_OPTIONS=--openssl-legacy-provider`，工作流里已经设置。electron-builder 默认从 GitHub 下载对应版本的 Electron，网络不通时可以先把压缩包放进一个本地目录，再用 `ELECTRON_CACHE=<目录>` 指过去。
 
 产物在 `dist_electron/`。macOS 上应用未签名，首次打开需要在 Finder 里右键选择「打开」。
 
@@ -347,7 +348,7 @@ macOS 目标要产出哪些架构由 [vue.config.js](vue.config.js) 里 `mac.tar
 | Windows | `*Setup*.exe`、`*portable*.exe`，以及 blockmap 与 `latest.yml` |
 | Linux | `*.AppImage`、`*.deb`、`*.rpm`、`*.snap`、`*.pacman`、`*.tar.gz`，以及 `latest-linux.yml` |
 
-`workflow_dispatch` 需要工作流文件已经存在于默认分支（master），所以先把这个分支合并进 master，手动触发的按钮才会出现在 Actions 页面。
+`workflow_dispatch` 的按钮只在工作流文件已经存在于默认分支（master）之后出现；要单独编译某个分支或标签，在 Actions 页面点 Run workflow，把 Use workflow from 选成对应引用，执行的是那个引用上的版本。
 
 上游更新用本地合并获取：`git fetch upstream && git merge upstream/master`。仓库里不再保留自动同步上游的工作流，因为它会把 master 强制拉回上游状态，覆盖掉这里的整合。
 
