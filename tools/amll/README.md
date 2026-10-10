@@ -6,8 +6,8 @@
 
 与仓库内其它位置的关系：
 
-- `.dev/amll/`：本机开发资源，已由 `.gitignore` 排除。语料、Electron 离线压缩包、分析报告、本地构建产物与接口服务临时目录都放在这里；本目录的脚本默认从这里读取输入、向这里写入运行痕迹。
-- `vendor/applemusic-like-lyrics/`：AMLL 源码子模块（锁定 `86200dea`），用于查阅源码与本地构建 core。运行时的依赖是 npm 上的 `@applemusic-like-lyrics/core@0.6.0` 与 `@applemusic-like-lyrics/lyric@1.1.0`，与子模块无关。
+- `.dev/amll/`：本机开发资源，已由 `.gitignore` 排除，不随仓库分发。语料、Electron 离线压缩包、分析报告、本地构建产物与接口服务临时目录都放在这里；本目录的脚本默认从这里读取输入、向这里写入运行痕迹。克隆仓库后需要自行准备这些文件（语料可用本地接口服务请求 `/lyric/new` 生成，Electron 压缩包可在联网时由 electron-builder 下载后留存）。
+- `applemusic-like-lyrics/`：AMLL 源码子模块（锁定 `86200dea`），用于查阅源码与本地构建 core。运行时的依赖是 npm 上的 `@applemusic-like-lyrics/core@0.6.0` 与 `@applemusic-like-lyrics/lyric@1.1.0`，与子模块无关。
 - `src/utils/amllLyrics.js`、`src/components/AmllLyricPlayer.vue`：被验证脚本直接读取的被测对象，脚本只读不写。
 
 ## 前置条件
@@ -66,13 +66,11 @@
 ## 构建 arm64 DMG
 
 ```sh
-NODE_OPTIONS=--openssl-legacy-provider \
-ELECTRON_CACHE="$PWD/.dev/amll/electron-cache" \
-npx vue-cli-service electron:build -p never -m --arm64
+NODE_OPTIONS=--openssl-legacy-provider npx vue-cli-service electron:build -p never -m --arm64
 ```
 
-- `NODE_OPTIONS=--openssl-legacy-provider`：Node 22 下 webpack 4 的 Terser 需要这个开关，否则打包阶段会失败。
-- `ELECTRON_CACHE`：指向 `.dev/amll/electron-cache`，该目录里已有 `electron-v13.6.9-darwin-arm64.zip`，electron-builder 直接复用，无需联网下载。
+- `NODE_OPTIONS=--openssl-legacy-provider`：Node 17 及以上，webpack 4 的压缩环节需要这个开关，否则打包阶段会失败。
+- `ELECTRON_CACHE`：可选。electron-builder 默认从 GitHub 下载 Electron 压缩包，网络不通时把已有的压缩包放进任意本地目录，用这个变量指过去即可复用，例如本机放在 `.dev/amll/electron-cache`。
 - 产物：`dist_electron/YesPlayMusic-mac-<版本>-arm64.dmg`，版本取自 `package.json` 的 `version`（当前为 0.4.10），同时生成 `.dmg.blockmap`。
 
 ## `.dev/amll/` 部件说明
