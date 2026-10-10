@@ -11,7 +11,7 @@
 - 歌词数据链路：`/lyric/new` 接口的请求、制作人员富文本行的规范化、逐字歌词与普通歌词的解析、翻译与音译的合并
 - 设置项：歌词字号、歌词行的垂直锚点位置、弹簧动画、非当前行的模糊与缩放、已播放行的隐藏、逐字渐变宽度、歌词背景类型、背景帧率、背景渲染比例
 
-范围之外的内容：播放内核、音频解码、播放控制、歌单与搜索。AMLL core 的源码放在 `vendor/applemusic-like-lyrics` 子模块里，用途是查阅源码与本地构建 core，运行时不引用它；运行时依赖 npm 上的 `@applemusic-like-lyrics/core@0.6.0` 与 `@applemusic-like-lyrics/lyric@1.1.0`，以及七个 `@pixi/*` 包（AMLL core 把它们声明为 peer），`postcss-nesting` 在 devDependencies。
+范围之外的内容：播放内核、音频解码、播放控制、歌单与搜索。AMLL core 的源码放在 `applemusic-like-lyrics` 子模块里，用途是查阅源码与本地构建 core，运行时不引用它；运行时依赖 npm 上的 `@applemusic-like-lyrics/core@0.6.0` 与 `@applemusic-like-lyrics/lyric@1.1.0`，以及七个 `@pixi/*` 包（AMLL core 把它们声明为 peer），`postcss-nesting` 在 devDependencies。
 
 ## 数据链路
 
@@ -160,17 +160,15 @@ Chromium 91 不支持无前缀 `mask-image`，AMLL 因此退回 `CalcMaskAnimato
 
 ## 构建与环境
 
-项目 `.nvmrc` 写的是 Node 14，devenv 使用 Node 16；当前机器是 Node 22，Terser 在 Node 17 以上需要 legacy provider，因此构建命令带上 `NODE_OPTIONS=--openssl-legacy-provider`。Electron 二进制从 `.dev/amll/electron-cache` 复用，避免联网下载：
+项目 `.nvmrc` 写的是 Node 14，devenv 使用 Node 16；用 Node 17 及以上构建时，webpack 4 的压缩环节需要 `NODE_OPTIONS=--openssl-legacy-provider`。electron-builder 默认从 GitHub 下载对应版本的 Electron，网络不通时可以先把压缩包放进任意本地目录，再用 `ELECTRON_CACHE` 指过去：
 
 ```sh
-NODE_OPTIONS=--openssl-legacy-provider \
-ELECTRON_CACHE=<仓库根>/.dev/amll/electron-cache \
-npx vue-cli-service electron:build -p never -m
+NODE_OPTIONS=--openssl-legacy-provider npx vue-cli-service electron:build -p never -m
 ```
 
-产物为 `dist_electron/YesPlayMusic-mac-0.4.10-arm64.dmg`。macOS 上应用未签名，首次打开需要在 Finder 里右键选择「打开」。
+产物为 `dist_electron/YesPlayMusic-mac-<版本>-arm64.dmg`。macOS 上应用未签名，首次打开需要在 Finder 里右键选择「打开」。
 
-`vendor/applemusic-like-lyrics` 是 git 子模块，指向 `https://github.com/amll-dev/applemusic-like-lyrics.git`，锁定提交 `86200dea`，比 npm 上的 `core-bundle@0.6.0` 多一个性能提交 `#619`。需要验证上游后续改动时，可以在子模块里构建 core，再把产物替换进 `node_modules`。
+`applemusic-like-lyrics` 是 git 子模块，指向 `https://github.com/amll-dev/applemusic-like-lyrics.git`，锁定提交 `86200dea`，比 npm 上的 `core-bundle@0.6.0` 多一个性能提交 `#619`。需要验证上游后续改动时，可以在子模块里构建 core，再把产物替换进 `node_modules`。
 
 ## 已知限制与上游对比
 
@@ -212,7 +210,7 @@ AMLL 0.6.0 的 `commitChanges` 每帧对全部歌词组做一次 `indexOf`，复
 | `serve-netease-api.js`、`serve-embedded-api.js` | 启动本地接口服务，临时目录指向 `.dev/amll/netease-tmp` |
 | `probe-animations.js`、`probe-lyric-dom.js`、`probe-mask-computed.js`、`probe-mask-nan.js`、`probe-mask-progress.js`、`probe-mask-usage.js` | 采集动画数量、歌词 DOM 与遮罩相关状态 |
 
-语料与中间产物在 `.dev/amll`（被 `.gitignore` 排除的本机目录）：
+语料与中间产物放在本机的 `.dev/amll` 目录，`.gitignore` 已排除，不随仓库分发。要复现下面的测量与验证，需要先在本地准备这些文件（语料可用本地接口服务逐个曲目请求 `/lyric/new` 生成，Electron 压缩包可在联网时由 electron-builder 自动下载后留存）：
 
 | 路径 | 内容 |
 | --- | --- |
