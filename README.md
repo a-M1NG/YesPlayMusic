@@ -350,6 +350,8 @@ macOS 目标要产出哪些架构由 [vue.config.js](vue.config.js) 里 `mac.tar
 
 `workflow_dispatch` 的按钮只在工作流文件已经存在于默认分支（master）之后出现；要单独编译某个分支或标签，在 Actions 页面点 Run workflow，把 Use workflow from 选成对应引用，执行的是那个引用上的版本。
 
+macOS 任务的打包阶段会撞上 GitHub 托管运行器自身的 hdiutil 抖动：卸载临时磁盘映像时报 `Resource busy`（[actions/runner-images#7522](https://github.com/actions/runner-images/issues/7522)），使用的 electron-builder 23 在这个分支上只会强卸一次。工作流在这个报错上重试，最多三次，重试带 `--skipBundle` 复用已经打好的前端产物，只重做打包；日志里没有这个报错时照旧立刻失败。
+
 上游更新用本地合并获取：`git fetch upstream && git merge upstream/master`。仓库里不再保留自动同步上游的工作流，因为它会把 master 强制拉回上游状态，覆盖掉这里的整合。
 
 ### 开发环境与接口服务
