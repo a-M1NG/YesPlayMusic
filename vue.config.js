@@ -112,6 +112,10 @@ module.exports = {
       .clear()
       .merge(['.js', '.jsx', '.vue', '.json', '.wasm', '.mjs']);
 
+    // 本机开发用的缓存、语料与验证产物放在 .dev 下，体积可达数百 MB，
+    // 交给 webpack 递归监听会拖慢热更新，因此整体排除
+    config.watchOptions({ ignored: /(node_modules|[\\/]\.dev)[\\/]/ });
+
     // LimitChunkCountPlugin 可以通过合并块来对块进行后期处理。用以解决 chunk 包太多的问题
     config.plugin('chunkPlugin').use(webpack.optimize.LimitChunkCountPlugin, [
       {
@@ -229,6 +233,9 @@ module.exports = {
           .loader('esbuild-loader')
           .options({ target: 'es2015', format: 'cjs' })
           .end();
+
+        // 主进程同样不要递归监听 .dev 下的开发缓存与语料
+        config.watchOptions({ ignored: /(node_modules|[\\/]\.dev)[\\/]/ });
       },
       // 渲染线程的配置文件
       chainWebpackRendererProcess: config => {
