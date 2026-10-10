@@ -323,15 +323,33 @@ git clone --recurse-submodules https://github.com/a-M1NG/YesPlayMusic.git
 git submodule update --init
 ```
 
-### 构建 arm64 DMG
+### 构建安装包
 
 ```sh
-npx vue-cli-service electron:build -p never -m
+npx vue-cli-service electron:build -p never -m    # macOS
+npx vue-cli-service electron:build -p never -w    # Windows
+npx vue-cli-service electron:build -p never -l    # Linux
 ```
+
+macOS 目标要产出哪些架构由 [vue.config.js](vue.config.js) 里 `mac.target` 的 `arch` 列表决定，当前是 x64、arm64、universal 三种，命令行的 `--arm64` 这类参数只会追加、不会收窄；本地只想出一种时把那个列表改小。
 
 项目 `.nvmrc` 与 devenv 指定 Node 14/16；用 Node 17 及以上构建时，webpack 4 的压缩环节需要额外的 `NODE_OPTIONS=--openssl-legacy-provider`。electron-builder 默认从 GitHub 下载对应版本的 Electron，网络不通时可以先把压缩包放进一个本地目录，再用 `ELECTRON_CACHE=<目录>` 指过去。
 
-产物为 `dist_electron/YesPlayMusic-mac-<版本>-arm64.dmg`。macOS 上应用未签名，首次打开需要在 Finder 里右键选择「打开」。
+产物在 `dist_electron/`。macOS 上应用未签名，首次打开需要在 Finder 里右键选择「打开」。
+
+### 持续集成
+
+[.github/workflows/build.yaml](.github/workflows/build.yaml) 负责编译三个平台的安装包：master 收到提交（也就是有 PR 被合并）时自动开始，其它情况只能在 Actions 页面手动运行。手动运行时填写 `release_tag`（例如 `v0.4.10`）会把全部产物发布为一个草稿 Release；不填则只在该次运行的 Artifacts 里提供下载。
+
+| 平台 | 产物 |
+| --- | --- |
+| macOS | `*-x64.dmg`、`*-arm64.dmg`、`*-universal.dmg`，以及 blockmap 与 `latest-mac.yml` |
+| Windows | `*Setup*.exe`、`*portable*.exe`，以及 blockmap 与 `latest.yml` |
+| Linux | `*.AppImage`、`*.deb`、`*.rpm`、`*.snap`、`*.pacman`、`*.tar.gz`，以及 `latest-linux.yml` |
+
+`workflow_dispatch` 需要工作流文件已经存在于默认分支（master），所以先把这个分支合并进 master，手动触发的按钮才会出现在 Actions 页面。
+
+上游更新用本地合并获取：`git fetch upstream && git merge upstream/master`。仓库里不再保留自动同步上游的工作流，因为它会把 master 强制拉回上游状态，覆盖掉这里的整合。
 
 ### 开发环境与接口服务
 
