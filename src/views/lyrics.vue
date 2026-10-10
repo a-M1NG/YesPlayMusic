@@ -12,7 +12,9 @@
         "
         class="lyrics-background"
         :class="{
-          'dynamic-background': settings.lyricsBackground === 'dynamic',
+          'dynamic-background':
+            settings.lyricsBackground === 'dynamic' &&
+            !settings.lowResourceMode,
         }"
       >
         <div
@@ -30,9 +32,13 @@
         :style="{ background }"
       ></div>
       <AmllBackgroundRender
-        v-if="settings.lyricsBackground === 'amll'"
+        v-if="
+          active &&
+          settings.lyricsBackground === 'amll' &&
+          !settings.lowResourceMode
+        "
         :album="bgImageUrl"
-        :playing="player.playing && showLyrics"
+        :playing="player.playing && active"
         :has-lyric="!noLyric"
         :fps="Number(settings.amllBackgroundFPS) || 30"
         :render-scale="Number(settings.amllBackgroundRenderScale) || 0.5"
@@ -239,15 +245,19 @@
         <transition name="slide-fade">
           <div v-show="!noLyric" class="lyrics-container">
             <AmllLyricPlayer
+              v-if="active && !noLyric"
               ref="amllLyricPlayer"
               :lines="lyricToShow"
               :time-source="getPlaybackTime"
               :playing="player.playing"
-              :disabled="!showLyrics || noLyric"
+              :disabled="!active || noLyric"
+              :fps="settings.lowResourceMode ? 30 : 60"
               :font-size="Number(settings.lyricFontSize) || 28"
               :align-position="Number(settings.amllAlignPosition) || 0.5"
               :enable-spring="settings.amllEnableSpring"
-              :enable-blur="settings.amllEnableBlur"
+              :enable-blur="
+                settings.amllEnableBlur && !settings.lowResourceMode
+              "
               :enable-scale="settings.amllEnableScale"
               :hide-passed-lines="settings.amllHidePassedLines"
               @line-click="onLyricLineClick"
@@ -320,6 +330,13 @@ export default {
     AmllLyricPlayer,
     AmllBackgroundRender,
   },
+  props: {
+    // 隐藏时释放渲染器，组件保留当前曲目的解析结果与配色。
+    active: {
+      type: Boolean,
+      default: true,
+    },
+  },
   data() {
     return {
       // AMLL 的歌词行，时间单位为毫秒
@@ -331,12 +348,12 @@ export default {
       date: this.formatTime(new Date()),
       isFullscreen: !!document.fullscreenElement,
       rightClickLyric: null,
-      // 进行中的歌词请求序号，0 表示当前没有请求在等待结果
+      // 单调递增的请求序号，用于丢弃过期响应。
       lyricRequestToken: 0,
     };
   },
   computed: {
-    ...mapState(['player', 'settings', 'showLyrics']),
+    ...mapState(['player', 'settings']),
     currentTrack() {
       return this.player.currentTrack;
     },
@@ -393,48 +410,83 @@ export default {
     },
   },
   watch: {
-    currentTrack() {
+    currentTrack(track, previous) {
+      if (track.id !== previous?.id) {
+        // 隐藏期间切歌只失效旧结果，恢复可见时再请求新歌。
+        this.lyricRequestToken += 1;
+        this.lyricTrackID = null;
+        this.lyricLoaded = false;
+        this.lyricLoading = false;
+        this.coverRequestToken += 1;
+        this.coverImage = null;
+        this.background = '';
+        this.setLyric([]);
+      }
+      if (this.active) {
+        this.getLyric();
+        this.getCoverColor();
+      }
+    },
+    active(active) {
+      this.initDate();
+      if (!active) return;
       this.getLyric();
       this.getCoverColor();
     },
-    showLyrics(show) {
-      // 歌词页面隐藏时停止滚动整个页面
-      this.$store.commit('enableScrolling', !show);
+    'settings.showLyricsTime'() {
+      this.initDate();
+    },
+    'settings.lyricsBackground'() {
+      this.getCoverColor();
     },
   },
   created() {
     // 播放时间记忆化的缓存字段，逐帧都会读写，放在实例上可以避开 data 的响应式追踪
     this.playbackTimeSeconds = NaN;
     this.playbackTimeMs = 0;
+    this.lyricTrackID = null;
+    this.lyricLoaded = false;
+    this.lyricLoading = false;
+    this.coverImage = null;
+    this.coverRequestToken = 0;
     this.getLyric();
     this.getCoverColor();
     this.initDate();
-    document.addEventListener('keydown', e => {
-      if (e.key === 'F11') {
-        e.preventDefault();
-        this.fullscreen();
-      }
-    });
-    document.addEventListener('fullscreenchange', () => {
-      this.isFullscreen = !!document.fullscreenElement;
-    });
+    document.addEventListener('keydown', this.handleFullscreenKey);
+    document.addEventListener('fullscreenchange', this.handleFullscreenChange);
   },
   beforeDestroy: function () {
     if (this.timer) {
       clearInterval(this.timer);
     }
     // 组件销毁后到达的歌词结果没有可以提交的对象
-    this.lyricRequestToken = 0;
+    this.lyricRequestToken += 1;
+    this.coverRequestToken += 1;
+    document.removeEventListener('keydown', this.handleFullscreenKey);
+    document.removeEventListener(
+      'fullscreenchange',
+      this.handleFullscreenChange
+    );
   },
   methods: {
     ...mapMutations(['toggleLyrics', 'updateModal']),
     ...mapActions(['likeATrack']),
     initDate() {
-      var _this = this;
       clearInterval(this.timer);
-      this.timer = setInterval(function () {
-        _this.date = _this.formatTime(new Date());
+      this.timer = null;
+      if (!this.active || !this.settings.showLyricsTime) return;
+      this.date = this.formatTime(new Date());
+      this.timer = setInterval(() => {
+        this.date = this.formatTime(new Date());
       }, 1000);
+    },
+    handleFullscreenKey(e) {
+      if (!this.active || e.key !== 'F11') return;
+      e.preventDefault();
+      this.fullscreen();
+    },
+    handleFullscreenChange() {
+      this.isFullscreen = !!document.fullscreenElement;
     },
     formatTime(value) {
       let hour = value.getHours().toString();
@@ -486,49 +538,65 @@ export default {
       }
     },
     async getLyric() {
+      if (!this.active) return false;
       const trackID = this.currentTrack.id;
       if (!trackID) return false;
+      if (
+        this.lyricTrackID === trackID &&
+        (this.lyricLoaded || this.lyricLoading)
+      ) {
+        return this.lyricLoaded;
+      }
+      this.lyricTrackID = trackID;
+      this.lyricLoaded = false;
+      this.lyricLoading = true;
       // 切歌后立即清空，上一首的歌词不会因为新请求尚未返回而留在屏幕上
       this.setLyric([]);
       const requestToken = ++this.lyricRequestToken;
       // 歌词行只有在仍然属于当前曲目且没有被更晚的请求取代时才提交；
       // 曲目标识相同的两次请求靠本次请求的序号区分，先发出的结果一律丢弃
       const applyLyric = lyric => {
+        if (this._isDestroyed) return false;
         if (this.currentTrack.id !== trackID) return false;
         if (this.lyricRequestToken !== requestToken) return false;
         this.setLyric(lyric);
-        if (this.lyric.length === 0) return false;
-        // 提交成功后本次请求不再是进行中的请求，后续的切换才能让它失效
-        this.lyricRequestToken = 0;
-        return true;
+        // 无歌词也是成功的解析结果，恢复窗口时不应重复请求。
+        this.lyricLoaded = true;
+        return this.lyric.length > 0;
       };
-      if (
-        this.currentTrack.pc !== null &&
-        this.currentTrack.cd === null &&
-        this.$store.state.data.user?.userId
-      ) {
-        //云盘未设置关联的歌曲获取其内置歌词
-        const data = await getCloudLyric(
-          trackID,
+      try {
+        if (
+          this.currentTrack.pc !== null &&
+          this.currentTrack.cd === null &&
           this.$store.state.data.user?.userId
-        );
-        // 云盘歌词接口直接返回歌词文本，与普通歌词接口的嵌套结构不同
+        ) {
+          const data = await getCloudLyric(
+            trackID,
+            this.$store.state.data.user?.userId
+          );
+          return applyLyric(
+            data?.lrc ? parseNeteaseLyric({ lrc: { lyric: data.lrc } }) : []
+          );
+        }
+        const data = await getLyric(trackID);
         return applyLyric(
-          data?.lrc ? parseNeteaseLyric({ lrc: { lyric: data.lrc } }) : []
+          data?.lrc?.lyric
+            ? filterNeteaseLyric(
+                parseNeteaseLyric(data),
+                this.currentTrack?.ar[0]?.name
+              )
+            : []
         );
+      } catch (error) {
+        console.debug('[lyrics] lyric request failed', error);
+        return false;
+      } finally {
+        if (this.lyricRequestToken === requestToken) this.lyricLoading = false;
       }
-      const data = await getLyric(trackID);
-      return applyLyric(
-        data?.lrc?.lyric
-          ? filterNeteaseLyric(
-              parseNeteaseLyric(data),
-              this.currentTrack?.ar[0]?.name
-            )
-          : []
-      );
     },
     setLyric(lyric) {
-      this.lyric = lyric;
+      // 歌词只整批替换，避免 Vue 对每个音节建立响应式访问器。
+      this.lyric = Object.freeze(lyric);
       this.hasTranslation = lyric.some(line => Boolean(line.translatedLyric));
       this.hasRomanization = lyric.some(line => Boolean(line.romanLyric));
       this.lyricType =
@@ -585,15 +653,27 @@ export default {
       this.player.switchShuffle();
     },
     getCoverColor() {
-      if (this.settings.lyricsBackground !== true) return;
+      if (!this.active || this.settings.lyricsBackground !== true) return;
+      if (!this.currentTrack.al?.picUrl) return;
+      const trackID = this.currentTrack.id;
       const cover = this.currentTrack.al?.picUrl + '?param=256y256';
+      if (this.coverImage === cover) return;
+      this.coverImage = cover;
+      const requestToken = ++this.coverRequestToken;
       Vibrant.from(cover, { colorCount: 1 })
         .getPalette()
         .then(palette => {
+          if (this._isDestroyed || trackID !== this.currentTrack.id) return;
+          if (this.coverRequestToken !== requestToken) return;
+          if (!palette.DarkMuted) return;
           const originColor = Color.rgb(palette.DarkMuted._rgb);
           const color = originColor.darken(0.1).rgb().string();
           const color2 = originColor.lighten(0.28).rotate(-30).rgb().string();
           this.background = `linear-gradient(to top left, ${color}, ${color2})`;
+        })
+        .catch(error => {
+          if (this.coverRequestToken === requestToken) this.coverImage = null;
+          console.debug('[lyrics] cover color unavailable', error);
         });
     },
     hasList() {

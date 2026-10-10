@@ -7,7 +7,7 @@
       :style="{ overflow: enableScrolling ? 'auto' : 'hidden' }"
       @scroll="handleScroll"
     >
-      <keep-alive>
+      <keep-alive :max="3">
         <router-view v-if="$route.meta.keepAlive"></router-view>
       </keep-alive>
       <router-view v-if="!$route.meta.keepAlive"></router-view>
@@ -19,7 +19,11 @@
     <ModalAddTrackToPlaylist v-if="isAccountLoggedIn" />
     <ModalNewPlaylist v-if="isAccountLoggedIn" />
     <transition v-if="enablePlayer" name="slide-up">
-      <Lyrics v-show="showLyrics" />
+      <Lyrics
+        v-if="lyricsMounted"
+        v-show="lyricsActive"
+        :active="lyricsActive"
+      />
     </transition>
   </div>
 </template>
@@ -51,6 +55,9 @@ export default {
     return {
       isElectron: process.env.IS_ELECTRON, // true || undefined
       userSelectNone: false,
+      windowVisible: !document.hidden,
+      nativeWindowVisible: true,
+      lyricsMounted: false,
     };
   },
   computed: {
@@ -72,16 +79,40 @@ export default {
     enablePlayer() {
       return this.player.enabled && this.$route.name !== 'lastfmCallback';
     },
+    lyricsActive() {
+      return this.showLyrics && this.windowVisible;
+    },
     showNavbar() {
       return this.$route.name !== 'lastfmCallback';
+    },
+  },
+  watch: {
+    showLyrics(show) {
+      if (show) this.lyricsMounted = true;
+      this.$store.commit('enableScrolling', !show);
     },
   },
   created() {
     if (this.isElectron) ipcRenderer(this);
     window.addEventListener('keydown', this.handleKeydown);
+    document.addEventListener('visibilitychange', this.handleVisibilityChange);
     this.fetchData();
   },
+  beforeDestroy() {
+    window.removeEventListener('keydown', this.handleKeydown);
+    document.removeEventListener(
+      'visibilitychange',
+      this.handleVisibilityChange
+    );
+  },
   methods: {
+    handleVisibilityChange() {
+      // Electron 13 在 Win11 上的页面可见性可能在最小化和恢复后都不准确。
+      const nativeWindows =
+        this.isElectron && window.require('os').platform() === 'win32';
+      this.windowVisible =
+        this.nativeWindowVisible && (nativeWindows || !document.hidden);
+    },
     handleKeydown(e) {
       if (e.code === 'Space') {
         if (e.target.tagName === 'INPUT') return false;
