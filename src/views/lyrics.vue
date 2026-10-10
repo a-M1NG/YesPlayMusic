@@ -31,12 +31,10 @@
         class="gradient-background"
         :style="{ background }"
       ></div>
+      <!-- 隐藏或最小化时不销毁渲染器，只靠 playing 停掉渲染循环，
+           否则恢复窗口时画布要重新初始化，会黑一下 -->
       <AmllBackgroundRender
-        v-if="
-          active &&
-          settings.lyricsBackground === 'amll' &&
-          !settings.lowResourceMode
-        "
+        v-if="settings.lyricsBackground === 'amll' && !settings.lowResourceMode"
         :album="bgImageUrl"
         :playing="player.playing && active"
         :has-lyric="!noLyric"
