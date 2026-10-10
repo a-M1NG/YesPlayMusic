@@ -15,7 +15,7 @@ let localStorage = {
     themeColor: 'default',
     musicQuality: 320000,
     lyricFontSize: 28,
-    lowResourceMode: true,
+    lowResourceMode: false,
     outputDevice: 'default',
     showPlaylistsByAppleMusic: true,
     enableUnblockNeteaseMusic: true,

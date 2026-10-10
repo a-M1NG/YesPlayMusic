@@ -4,6 +4,9 @@ const path = require('path');
 const WebSocket = require('ws');
 const root = path.resolve(__dirname, '../..');
 const mode = process.argv[2] || 'original';
+const energySaving = process.argv.includes('--energy-saving');
+const label = mode + (energySaving ? '-energy-saving' : '');
+const fixtureOnly = process.argv.includes('--fixture-only');
 const audioFile = path.join(root, '.dev/silence.wav');
 if (!fs.existsSync(audioFile)) {
   fs.mkdirSync(path.dirname(audioFile), { recursive: true });
@@ -92,12 +95,15 @@ async function main() {
   };
   await send('Performance.enable');
   const results = [];
-  results.push(await sample('idle'));
+  if (!fixtureOnly) results.push(await sample('idle'));
   const fixture = `async () => {
     const root = document.querySelector('#app').__vue__;
     const store = root.$store;
     const player = store.state.player;
     store.state.settings.lyricsBackground = 'amll';
+    if (${JSON.stringify(
+      mode
+    )} !== 'original') store.state.settings.lowResourceMode = ${energySaving};
     store.state.settings.enableDiscordRichPresence = false;
     store.state.settings.automaticallyCacheSongs = false;
     const canvas = document.createElement('canvas'); canvas.width = canvas.height = 256;
@@ -126,16 +132,21 @@ async function main() {
       words:Array.from({length:10},(_,j)=>({word:'测试歌词'[j%4],startTime:i*2500+j*250,endTime:i*2500+(j+1)*250}))}));
     window.__perfLines = lines;
     lyrics.setLyric(lines);
-    window.__reopenPerfLyrics = async () => { store.state.showLyrics = true; await root.$nextTick(); root.$children.find(x => x.$options.name === 'Lyrics').setLyric(lines); };
+    window.__reopenPerfLyrics = async () => { store.state.showLyrics = true; await root.$nextTick(); const page = root.$children.find(x => x.$options.name === 'Lyrics'); if (page.lyric.length === 0) page.setLyric(lines); };
     return {playing:player.playing, position:player.seek(), lyricLines:lyrics.lyric.length, mode:store.state.settings.lowResourceMode};
   }`;
   const playback = await evaluate('(' + fixture + ')()');
   if (!playback.playing) throw new Error('Local audio did not start');
+  if (fixtureOnly) {
+    console.log(JSON.stringify(playback));
+    ws.close();
+    return;
+  }
   await wait(2000);
   results.push(await sample('lyrics-playing'));
   const screenshot = await send('Page.captureScreenshot', { format: 'png' });
   fs.writeFileSync(
-    path.join(root, '.dev', mode + '-lyrics.png'),
+    path.join(root, '.dev', label + '-lyrics.png'),
     Buffer.from(screenshot.result.data, 'base64')
   );
   await evaluate(
@@ -154,9 +165,9 @@ async function main() {
   const reopened = await evaluate(
     `(async()=>{for(let i=0;i<5;i++){await window.__reopenPerfLyrics();await new Promise(r=>setTimeout(r,100));document.querySelector('#app').__vue__.$store.state.showLyrics=false;await new Promise(r=>setTimeout(r,450));}await window.__reopenPerfLyrics();return {lyrics:document.querySelectorAll('.amll-lyric-player').length,lines:document.querySelector('#app').__vue__.$children.find(x=>x.$options.name==='Lyrics').lyric.length};})()`
   );
-  const report = { mode, playback, closed, reopened, results };
+  const report = { mode, energySaving, playback, closed, reopened, results };
   fs.writeFileSync(
-    path.join(root, '.dev', mode + '-performance.json'),
+    path.join(root, '.dev', label + '-performance.json'),
     JSON.stringify(report, null, 2)
   );
   console.log(JSON.stringify(report));

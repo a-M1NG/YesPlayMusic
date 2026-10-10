@@ -90,7 +90,7 @@ export default {
       if (!this.background || !album) return;
       // MeshGradientRenderer.setAlbum 内部已经吞掉封面拉取与解码的失败并打印错误，
       // 但拿不到 2D 上下文或者图片尺寸为 0 时仍然会抛出，这个 Promise 因此可能变成
-      // rejected：异常继续向上传递，由调用方处理
+      // rejected：在此记录失败，避免产生未处理的 Promise 拒绝
       try {
         await this.background.setAlbum(album);
       } catch (error) {
