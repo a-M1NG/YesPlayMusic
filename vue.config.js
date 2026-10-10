@@ -138,7 +138,7 @@ module.exports = {
         publish: [
           {
             provider: 'github',
-            owner: 'qier222',
+            owner: 'a-M1NG',
             repo: 'YesPlayMusic',
             vPrefixedTagName: true,
             releaseType: 'draft',
@@ -151,7 +151,8 @@ module.exports = {
           target: [
             {
               target: 'dmg',
-              arch: ['arm64'],
+              // 三种架构都产出，与上游 Release 的 dmg 一致；本地只想出 arm64 时在命令后加 --arm64
+              arch: ['x64', 'arm64', 'universal'],
             },
           ],
           artifactName: '${productName}-${os}-${version}-${arch}.${ext}',

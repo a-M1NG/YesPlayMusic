@@ -1,116 +1,154 @@
-name: Release
+name: Build
 
-env:
-  YARN_INSTALL_NOPT: yarn add --ignore-platform --ignore-optional
-
+# 触发方式：
+#   - 合并 PR：PR 合并到 master 后 master 收到提交，自动开始编译
+#   - 其它情况只能手动运行：Actions 页面选择本工作流点 Run workflow
+# 手动运行时填写 release_tag（例如 v0.4.10）会把三个平台的产物一起发布为草稿 Release，
+# 留空则只产出可下载的构建产物（Actions 运行页面底部的 Artifacts）
 on:
   push:
     branches:
       - master
-    tags:
-      - v*
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 非空时用这个标签发布草稿 Release（例如 v0.4.10）
+        required: false
+        default: ''
+
+# 发布 Release 需要写权限；只编译时用不到
+permissions:
+  contents: write
+
+env:
+  # 构建期注入的前端环境变量，与仓库外被忽略的 .env 一致
+  VUE_APP_NETEASE_API_URL: /api
+  VUE_APP_ELECTRON_API_URL: /api
+  VUE_APP_ELECTRON_API_URL_DEV: http://127.0.0.1:10754
+  VUE_APP_LASTFM_API_KEY: 09c55292403d961aa517ff7f5e8a3d9c
+  VUE_APP_LASTFM_API_SHARED_SECRET: 307c9fda32b3904e53654baff215cb67
 
 jobs:
-  release:
+  build:
+    name: Build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
-    env:
-      SNAPCRAFT_STORE_CREDENTIALS: ${{ secrets.snapcraft_token }}
-
     strategy:
+      fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest, ubuntu-22.04]
-
+        include:
+          - name: macos
+            os: macos-latest
+            # vue.config.js 的 mac 目标列出 x64、arm64、universal 三种架构，这里不加额外参数
+            build: npx vue-cli-service electron:build -p never -m
+            artifact: YesPlayMusic-macos
+            files: |
+              dist_electron/*.dmg
+              dist_electron/*.dmg.blockmap
+              dist_electron/latest-mac.yml
+          - name: windows
+            os: windows-latest
+            build: npx vue-cli-service electron:build -p never -w
+            artifact: YesPlayMusic-windows
+            files: |
+              dist_electron/*.exe
+              dist_electron/*.exe.blockmap
+              dist_electron/latest.yml
+          - name: linux
+            os: ubuntu-22.04
+            build: npx vue-cli-service electron:build -p never -l
+            artifact: YesPlayMusic-linux
+            files: |
+              dist_electron/*.AppImage
+              dist_electron/*.deb
+              dist_electron/*.rpm
+              dist_electron/*.snap
+              dist_electron/*.pacman
+              dist_electron/*.tar.gz
+              dist_electron/latest-linux.yml
     steps:
-      - name: Check out Git repository
-        uses: actions/checkout@v3
-        with:
-          submodules: 'recursive'
+      # 子模块只用于查阅 AMLL 源码，编译过程不需要，因此不检出，省掉一次大仓库克隆
+      - name: 检出仓库
+        uses: actions/checkout@v4
 
-      - name: Install Node.js, NPM and Yarn
-        uses: actions/setup-node@v3
+      - name: 安装 Node.js 与 Yarn
+        uses: actions/setup-node@v4
         with:
+          # webpack 4 在 Node 17 以上需要 --openssl-legacy-provider，这里按项目 engines 用 Node 16
           node-version: 16
           cache: 'yarn'
 
-      - name: Install RPM & Pacman (on Ubuntu)
+      - name: 安装 Linux 打包工具
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update &&
-          sudo apt-get install --no-install-recommends -y rpm &&
-          sudo apt-get install --no-install-recommends -y libarchive-tools &&
-          sudo apt-get install --no-install-recommends -y libopenjp2-tools
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y rpm libarchive-tools libopenjp2-tools
 
-      - name: Install Snapcraft (on Ubuntu)
+      - name: 安装 Snapcraft
+        if: runner.os == 'Linux'
         uses: samuelmeuli/action-snapcraft@v3
-        if: startsWith(matrix.os, 'ubuntu')
 
-      - id: get_unm_version
-        name: Get the installed UNM version
-        run: |
-          yarn --ignore-optional
-          unm_version=$(node -e "console.log(require('./node_modules/@unblockneteasemusic/rust-napi/package.json').version)")
-          echo "::set-output name=unmver::${unm_version}"
+      - name: 安装依赖
+        run: yarn install --ignore-optional
+
+      - name: 读取原生模块版本
+        id: unm
         shell: bash
-
-      - name: Install UNM dependencies for Windows
-        if: runner.os == 'Windows'
         run: |
-          ${{ env.YARN_INSTALL_NOPT }} \
-            @unblockneteasemusic/rust-napi-win32-x64-msvc@${{steps.get_unm_version.outputs.unmver}}
-        shell: bash
+          echo "version=$(node -p "require('./node_modules/@unblockneteasemusic/rust-napi/package.json').version")" >> "$GITHUB_OUTPUT"
 
-      - name: Install UNM dependencies for macOS
+      # rust-napi 的平台二进制是可选依赖，按当前平台补装，否则打包出来的应用缺少解码模块
+      - name: 补装 macOS 原生模块
         if: runner.os == 'macOS'
+        shell: bash
         run: |
-          ${{ env.YARN_INSTALL_NOPT }} \
-            @unblockneteasemusic/rust-napi-darwin-x64@${{steps.get_unm_version.outputs.unmver}} \
-            @unblockneteasemusic/rust-napi-darwin-arm64@${{steps.get_unm_version.outputs.unmver}} \
+          yarn add --ignore-platform --ignore-optional \
+            @unblockneteasemusic/rust-napi-darwin-x64@${{ steps.unm.outputs.version }} \
+            @unblockneteasemusic/rust-napi-darwin-arm64@${{ steps.unm.outputs.version }} \
             dmg-license
-        shell: bash
 
-      - name: Install UNM dependencies for Linux
-        if: runner.os == 'Linux'
+      - name: 补装 Windows 原生模块
+        if: runner.os == 'Windows'
+        shell: bash
         run: |
-          ${{ env.YARN_INSTALL_NOPT }} \
-            @unblockneteasemusic/rust-napi-linux-x64-gnu@${{steps.get_unm_version.outputs.unmver}} \
-            @unblockneteasemusic/rust-napi-linux-arm64-gnu@${{steps.get_unm_version.outputs.unmver}} \
-            @unblockneteasemusic/rust-napi-linux-arm-gnueabihf@${{steps.get_unm_version.outputs.unmver}}
+          yarn add --ignore-platform --ignore-optional \
+            @unblockneteasemusic/rust-napi-win32-x64-msvc@${{ steps.unm.outputs.version }}
+
+      - name: 补装 Linux 原生模块
+        if: runner.os == 'Linux'
         shell: bash
+        run: |
+          yarn add --ignore-platform --ignore-optional \
+            @unblockneteasemusic/rust-napi-linux-x64-gnu@${{ steps.unm.outputs.version }} \
+            @unblockneteasemusic/rust-napi-linux-arm64-gnu@${{ steps.unm.outputs.version }} \
+            @unblockneteasemusic/rust-napi-linux-arm-gnueabihf@${{ steps.unm.outputs.version }}
 
-      - name: Build/release Electron app
-        uses: samuelmeuli/action-electron-builder@v1.6.0
-        env:
-          VUE_APP_NETEASE_API_URL: /api
-          VUE_APP_ELECTRON_API_URL: /api
-          VUE_APP_ELECTRON_API_URL_DEV: http://127.0.0.1:10754
-          VUE_APP_LASTFM_API_KEY: 09c55292403d961aa517ff7f5e8a3d9c
-          VUE_APP_LASTFM_API_SHARED_SECRET: 307c9fda32b3904e53654baff215cb67
+      - name: 编译 ${{ matrix.name }}
+        run: ${{ matrix.build }}
+
+      - name: 上传 ${{ matrix.name }} 产物
+        uses: actions/upload-artifact@v4
         with:
-          # GitHub token, automatically provided to the action
-          # (No need to define this secret in the repo settings)
-          github_token: ${{ secrets.github_token }}
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.files }}
+          if-no-files-found: error
+          compression-level: 0
 
-          # If the commit is tagged with a version (e.g. "v1.0.0"),
-          # release the app after building
-          release: ${{ startsWith(github.ref, 'refs/tags/v') }}
-
-          use_vue_cli: true
-
-      - uses: actions/upload-artifact@v4
+  release:
+    name: 发布草稿 Release
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.release_tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: 收集全部产物
+        uses: actions/download-artifact@v4
         with:
-          name: YesPlayMusic-mac
-          path: dist_electron/*-universal.dmg
-          if-no-files-found: ignore
+          path: release-assets
 
-      - uses: actions/upload-artifact@v4
+      - name: 创建草稿 Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: YesPlayMusic-win
-          path: dist_electron/*Setup*.exe
-          if-no-files-found: ignore
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: YesPlayMusic-linux
-          path: dist_electron/*.AppImage
-          if-no-files-found: ignore
+          tag_name: ${{ inputs.release_tag }}
+          name: ${{ inputs.release_tag }}
+          draft: true
+          generate_release_notes: true
+          files: release-assets/**/*
