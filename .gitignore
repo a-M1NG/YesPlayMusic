@@ -41,3 +41,7 @@ devenv.local.nix
 
 # pre-commit
 .pre-commit-config.yaml
+
+# 本地开发暂存：electron 离线打包缓存、歌词语料、验证产物与配置目录
+# 这些内容由 tools/amll 下的脚本使用，体积较大，不进入版本管理
+/.dev/
