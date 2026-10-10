@@ -126,9 +126,40 @@ jobs:
       # webpack 4 的压缩环节在 Node 17 以上要用 OpenSSL 的旧算法，否则打包时报
       # error:0308010C:digital envelope routines::unsupported
       - name: 编译 ${{ matrix.name }}
+        if: runner.os != 'macOS'
         env:
           NODE_OPTIONS: --openssl-legacy-provider
         run: ${{ matrix.build }}
+
+      # GitHub 的 macOS 运行器上 hdiutil 卸载临时卷会随机报 Resource busy（actions/runner-images#7522），
+      # 属于运行器自身的抖动，electron-builder 23 在这个分支上只强卸一次，因此在这里重试：
+      # 只有日志里出现 Resource busy 才重试，其它报错照旧直接失败；重试带 --skipBundle 复用上一轮的前端包
+      - name: 编译 ${{ matrix.name }}
+        if: runner.os == 'macOS'
+        env:
+          NODE_OPTIONS: --openssl-legacy-provider
+        run: |
+          log="$RUNNER_TEMP/electron-build.log"
+          for attempt in 1 2 3; do
+            if [ "$attempt" = 1 ]; then
+              command="${{ matrix.build }}"
+            else
+              command="${{ matrix.build }} --skipBundle"
+            fi
+            echo "第 $attempt 次打包：$command"
+            if $command > "$log" 2>&1; then
+              tail -25 "$log"
+              exit 0
+            fi
+            tail -60 "$log"
+            if grep -q 'Resource busy' "$log" && [ "$attempt" -lt 3 ]; then
+              echo "hdiutil 报 Resource busy，10 秒后重试"
+              sleep 10
+              continue
+            fi
+            exit 1
+          done
+          exit 1
 
       - name: 上传 ${{ matrix.name }} 产物
         uses: actions/upload-artifact@v4
