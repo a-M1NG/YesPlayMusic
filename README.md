@@ -292,3 +292,49 @@ API 源代码来自 [Binaryify/NeteaseCloudMusicApi](https://github.com/Binaryif
 [library-screenshot]: images/library.png
 [library-dark-screenshot]: images/library-dark.png
 [search-screenshot]: images/search.png
+
+---
+
+## 🎤 AMLL 歌词整合
+
+本仓库是 [qier222/YesPlayMusic](https://github.com/qier222/YesPlayMusic) 的分支。`master` 与上游 `df075cc` 完全一致，不含本次整合；全部工作位于 `amll-lyrics-integration` 分支，共四个提交：接入 AMLL 播放器与 `/lyric/new`、修复翻译字段与合并、背景与循环启停优化、播放器逐帧开销优化。整合前的基线打有 `backup/pre-restructure` 标签。
+
+这次整合做的事情：
+
+- 歌词页改用 [Apple Music-like Lyrics](https://github.com/amll-dev/applemusic-like-lyrics) 的播放组件渲染歌词，支持逐字擦除、弹簧动画与行间过渡
+- 歌词接口从 `/lyric` 换成 `/lyric/new`，取到逐字歌词 `yrc` 及其逐字翻译 `ytlrc`，路由注册顺序保证 `/lyric/new` 不被 `/lyric` 的前缀匹配截走
+- 修正翻译字段的读取与合并规则，翻译、音译按容差最近匹配写入主歌词行
+- 新增 AMLL 动态背景（MeshGradientRenderer），并在歌词页隐藏、暂停、无歌词时停掉对应的渲染循环
+- 接管播放器根元素上的 `--amll-player-time` 写入，降低逐帧样式重算开销
+
+目录说明：
+
+| 路径 | 说明 |
+| --- | --- |
+| `vendor/applemusic-like-lyrics` | git 子模块，指向 `https://github.com/amll-dev/applemusic-like-lyrics.git`，锁定提交 `86200dea`。比 npm 上的 `core-bundle@0.6.0` 多一个性能提交 `#619`，用于查阅源码与本地构建 core，运行时不引用 |
+| `tools/amll` | 可复用的测量与验证脚本 |
+| `.dev` | 本机开发资源，未纳入版本管理（`.gitignore` 排除）。其中 `amll/electron-cache` 是离线打包用的 Electron 13.6.9 压缩包（darwin-arm64 与 darwin-x64 两份），`amll/census-lyrics.json` 等是 1694 首 `/lyric/new` 原始响应语料，`amll/reports` 是分析报告，`amll/netease-tmp` 是接口服务的临时目录 |
+
+### 构建 arm64 DMG
+
+项目 `.nvmrc` 与 devenv 使用 Node 14/16，当前机器是 Node 22，Terser 因此需要 legacy provider；Electron 二进制从 `.dev/amll/electron-cache` 复用，无需联网下载：
+
+```sh
+NODE_OPTIONS=--openssl-legacy-provider \
+ELECTRON_CACHE=<仓库根>/.dev/amll/electron-cache \
+npx vue-cli-service electron:build -p never -m
+```
+
+产物为 `dist_electron/YesPlayMusic-mac-0.4.10-arm64.dmg`。macOS 上应用未签名，首次打开需要在 Finder 里右键选择「打开」。
+
+### 开发环境与接口服务
+
+```sh
+yarn serve              # 网页端开发
+yarn electron:serve     # Electron 开发
+yarn netease_api:run    # 本地接口服务，默认 3000 端口
+```
+
+测量与验证脚本见 `tools/amll`。
+
+已知限制与上游对比见 [docs/amll-integration.md](docs/amll-integration.md)。
