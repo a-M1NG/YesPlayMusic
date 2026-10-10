@@ -15,6 +15,9 @@ app.setPath(
 );
 app.commandLine.appendSwitch('remote-debugging-port', '9333');
 app.commandLine.appendSwitch('mute-audio');
+// 测量时避免窗口被其它应用遮挡导致降频；最小化仍由产品的原生 IPC 处理。
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
 const main =
   mode === 'original'
     ? path.join(root, '.dev/original-source/background.js')

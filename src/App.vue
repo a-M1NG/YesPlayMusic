@@ -19,7 +19,11 @@
     <ModalAddTrackToPlaylist v-if="isAccountLoggedIn" />
     <ModalNewPlaylist v-if="isAccountLoggedIn" />
     <transition v-if="enablePlayer" name="slide-up">
-      <Lyrics v-if="showLyrics && windowVisible" />
+      <Lyrics
+        v-if="lyricsMounted"
+        v-show="lyricsActive"
+        :active="lyricsActive"
+      />
     </transition>
   </div>
 </template>
@@ -53,6 +57,7 @@ export default {
       userSelectNone: false,
       windowVisible: !document.hidden,
       nativeWindowVisible: true,
+      lyricsMounted: false,
     };
   },
   computed: {
@@ -74,12 +79,16 @@ export default {
     enablePlayer() {
       return this.player.enabled && this.$route.name !== 'lastfmCallback';
     },
+    lyricsActive() {
+      return this.showLyrics && this.windowVisible;
+    },
     showNavbar() {
       return this.$route.name !== 'lastfmCallback';
     },
   },
   watch: {
     showLyrics(show) {
+      if (show) this.lyricsMounted = true;
       this.$store.commit('enableScrolling', !show);
     },
   },
@@ -98,7 +107,11 @@ export default {
   },
   methods: {
     handleVisibilityChange() {
-      this.windowVisible = this.nativeWindowVisible && !document.hidden;
+      // Electron 13 在 Win11 上的页面可见性可能在最小化和恢复后都不准确。
+      const nativeWindows =
+        this.isElectron && window.require('os').platform() === 'win32';
+      this.windowVisible =
+        this.nativeWindowVisible && (nativeWindows || !document.hidden);
     },
     handleKeydown(e) {
       if (e.code === 'Space') {

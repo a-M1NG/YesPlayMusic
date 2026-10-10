@@ -50,7 +50,7 @@ export function getTrackDetail(ids) {
   };
   // 缓存命中时后台刷新，未命中时复用同一个网络请求。
   const latest = fetchLatest();
-  latest.catch(() => {});
+  latest.catch(error => console.debug('[track] detail refresh failed', error));
 
   let idsInArray = [String(ids)];
   if (typeof ids === 'string') {
