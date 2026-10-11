@@ -507,6 +507,15 @@ export default {
       }
     }
 
+    // AMLL 给每个歌词行开了 content-visibility: auto，离屏行不真正排版，ResizeObserver
+    // 报回来的是 contain-intrinsic-size 的 40px 占位或布局跟上之前的估算值。焦点行的纵向
+    // 落位是「视口高 × 对齐位置 − 组高 / 2」，等真实高度替换进来时组高变化，焦点行就跟着
+    // 挪半高：弹簧开着被吸收成平滑移动，关掉弹簧就是一帧写死的位移。关掉跳过离屏渲染的
+    // 优化，让行插入 DOM 时立刻按真实高度被测量，占位值不再参与焦点行落位。
+    [class*='lyricLine'] {
+      content-visibility: visible;
+    }
+
     // 关闭弹簧动画后，AMLL 改用 transition 播放歌词行的缩放与位移，
     // 上面那份过渡列表里没有 transform，会把这一份过渡整条顶替掉，
     // 暂停与恢复时的缩放因此失去过渡直接跳变，这里按该模式补全
