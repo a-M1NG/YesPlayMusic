@@ -71,7 +71,7 @@ NODE_OPTIONS=--openssl-legacy-provider npx vue-cli-service electron:build -p nev
 
 - `NODE_OPTIONS=--openssl-legacy-provider`：Node 17 及以上，webpack 4 的压缩环节需要这个开关，否则打包阶段会失败。
 - `ELECTRON_CACHE`：可选。electron-builder 默认从 GitHub 下载 Electron 压缩包，网络不通时把已有的压缩包放进任意本地目录，用这个变量指过去即可复用，例如本机放在 `.dev/amll/electron-cache`。
-- 产物：`dist_electron/YesPlayMusic-mac-<版本>-arm64.dmg`，版本取自 `package.json` 的 `version`（当前为 0.4.10），同时生成 `.dmg.blockmap`。
+- 产物：`dist_electron/YesPlayMusic-mac-<版本>-arm64.dmg`，版本取自 `package.json` 的 `version`（当前为 0.4.11-beta），同时生成 `.dmg.blockmap`。
 
 ## `.dev/amll/` 部件说明
 
