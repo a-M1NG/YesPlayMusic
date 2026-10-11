@@ -1,0 +1,50 @@
+diff --git a/node_modules/@applemusic-like-lyrics/core/dist/amll-core.mjs b/node_modules/@applemusic-like-lyrics/core/dist/amll-core.mjs
+index b38e570..e54dec8 100644
+--- a/node_modules/@applemusic-like-lyrics/core/dist/amll-core.mjs
++++ b/node_modules/@applemusic-like-lyrics/core/dist/amll-core.mjs
+@@ -6592,15 +6592,12 @@ var LineBalancer = class {
+ 		adapter.resetDOM();
+ 		const prevWhiteSpace = this.mainElement.style.whiteSpace;
+ 		this.mainElement.style.whiteSpace = "nowrap";
+-		const parentElement = this.mainElement.parentElement;
+-		let prevTransform = "";
++		// 主行自身的缩放会让量出来的宽度失真，量完再把缩放写回去
++		const prevTransform = this.mainElement.style.transform;
+ 		let transformChanged = false;
+-		if (parentElement) {
+-			prevTransform = parentElement.style.transform;
+-			if (prevTransform && prevTransform !== "none") {
+-				parentElement.style.transform = "none";
+-				transformChanged = true;
+-			}
++		if (prevTransform && prevTransform !== "none") {
++			this.mainElement.style.transform = "none";
++			transformChanged = true;
+ 		}
+ 		let lockAcquired = false;
+ 		try {
+@@ -6633,7 +6630,7 @@ var LineBalancer = class {
+ 			this.isBalancing = false;
+ 		} finally {
+ 			this.mainElement.style.whiteSpace = prevWhiteSpace;
+-			if (transformChanged && parentElement) parentElement.style.transform = prevTransform;
++			if (transformChanged) this.mainElement.style.transform = prevTransform;
+ 			if (lockAcquired) this.isBalancing = false;
+ 		}
+ 	}
+@@ -7421,11 +7418,13 @@ var LyricLineEl = class extends LyricLineBase {
+ 		}
+ 	}
+ 	rebuildStyle() {
+-		const style = this.element.style;
+ 		const currentScale = this.lineTransforms.scale.getCurrentPosition() / 100;
+ 		if (Math.abs(currentScale - this.lastScaleNum) >= 1e-4) {
+ 			this.lastScaleNum = currentScale;
+-			style.transform = `scale(${currentScale.toFixed(3)})`;
++			// 缩放只作用在主行上：整行缩放会让主行与翻译行以行中央为基点向相反
++			// 方向移动，切到当前行时主行因此看起来下掉一点；只缩放主行还能让每行
++			// 保持单个合成层，滚动与间奏动画不会被多出来的合成层拖慢
++			this.element.children[0].style.transform = `scale(${currentScale.toFixed(3)})`;
+ 		}
+ 	}
+ 	rebuildElement() {
