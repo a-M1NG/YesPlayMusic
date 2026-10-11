@@ -21,6 +21,29 @@ const PLAYER_TIME_PROPERTY = '--amll-player-time';
 const PLAYER_TIME_WRITE_INTERVAL = 2;
 
 /**
+ * 鼠标移出歌词区域后多久自动翻回当前歌词行，单位为毫秒。
+ *
+ * 鼠标已经离开歌词区域，说明用户多半没有在细看歌词，等待时间不必太长。
+ */
+const MOUSE_LEAVE_RESUME_DELAY_MS = 3000;
+
+/**
+ * 最后一次滚动输入之后多久自动翻回当前歌词行，单位为毫秒。
+ *
+ * 用户可能停在某一行细看歌词，因此这个等待时间要比鼠标离开更长。
+ */
+const SCROLL_IDLE_RESUME_DELAY_MS = 10000;
+
+/**
+ * 滚动输入监听的选项。
+ *
+ * 滚动输入监听只登记用户滚动过这个事实，不阻止默认行为；
+ * AMLL 自己也在歌词层上听这些事件，声明成 passive 才不会让浏览器
+ * 把合成线程上的滚动退回主线程。
+ */
+const PASSIVE_LISTENER_OPTIONS = { passive: true };
+
+/**
  * 判断歌词行里有没有词级时间信息。
  *
  * 普通歌词每行只解析出一个音节，音节时间与整行时间完全一致；
@@ -133,6 +156,8 @@ export default {
   },
   watch: {
     lines(lines) {
+      // 新一批歌词行会重新定位，上一批歌词的手动滚动状态不再有意义
+      this.cleanupManualScroll();
       // 是否逐字只跟这批歌词行有关，在这里算一次缓存下来，逐帧不再查询词元素
       this.lineRevision += 1;
       this.wordLevel = hasWordLevelLines(lines);
@@ -194,6 +219,9 @@ export default {
     },
     disabled(disabled) {
       if (disabled) {
+        // 宿主已经不可见，此时触发排版计算只会照着 0 高度去排，
+        // 因此这里只把定时器与手动滚动状态清掉，不碰播放器实例
+        this.cleanupManualScroll();
         // 整页关闭会把宿主置成 display:none，AMLL 会把歌词行高度写成 0 并取消观察，
         // 这种情况下重新启用必须整体重建，否则这些行不会再回到 DOM。
         if (this.pageClosed) this.needsRebuildOnEnable = true;
@@ -241,6 +269,12 @@ export default {
     this.playerSetProperty = null;
     // 本次停用是否由整页关闭造成，决定重新启用时要不要整体重建，含义见 disabled watcher
     this.needsRebuildOnEnable = false;
+    // 用户是否手动滚动过歌词且尚未恢复自动对齐，含义见 handleScrollInput
+    this.manualScrolled = false;
+    // 鼠标离开歌词区域后等待自动回归的定时器
+    this.mouseLeaveResumeTimer = 0;
+    // 最后一次滚动输入之后等待自动回归的定时器
+    this.scrollIdleResumeTimer = 0;
   },
   mounted() {
     const player = new LyricPlayer();
@@ -260,6 +294,27 @@ export default {
     player.addEventListener('line-click', this.handleLineClick);
     player.addEventListener('line-contextmenu', this.handleLineContextMenu);
 
+    // 滚动输入与指针进出都发生在根元素上。滚动监听必须是 passive，
+    // AMLL 自己也要在歌词层上听这些事件，非 passive 会让浏览器把合成线程的滚动改成主线程滚动
+    const host = this.$refs.host;
+    host.addEventListener(
+      'wheel',
+      this.handleScrollInput,
+      PASSIVE_LISTENER_OPTIONS
+    );
+    host.addEventListener(
+      'touchstart',
+      this.handleScrollInput,
+      PASSIVE_LISTENER_OPTIONS
+    );
+    host.addEventListener(
+      'touchmove',
+      this.handleScrollInput,
+      PASSIVE_LISTENER_OPTIONS
+    );
+    host.addEventListener('mouseenter', this.handleHostMouseEnter);
+    host.addEventListener('mouseleave', this.handleHostMouseLeave);
+
     player.setLyricLines(this.lines, this.getCurrentTime());
     this.holdEnteringLines(player, true);
     if (this.playing) player.resume();
@@ -268,6 +323,13 @@ export default {
     if (!this.disabled) this.startFrameLoop();
   },
   beforeDestroy() {
+    const host = this.$refs.host;
+    host.removeEventListener('wheel', this.handleScrollInput);
+    host.removeEventListener('touchstart', this.handleScrollInput);
+    host.removeEventListener('touchmove', this.handleScrollInput);
+    host.removeEventListener('mouseenter', this.handleHostMouseEnter);
+    host.removeEventListener('mouseleave', this.handleHostMouseLeave);
+    this.cleanupManualScroll();
     this.stopFrameLoop();
     this.restorePlayerTimeWrite();
     this.player?.dispose();
@@ -461,6 +523,8 @@ export default {
       if (written) written.offsetHeight;
     },
     handleLineClick(event) {
+      // 点击歌词行会触发 Seek，AMLL 自己会回到当前行，这里的手动滚动状态随即失效
+      this.cleanupManualScroll();
       const payload = {
         lineIndex: event.lineIndex,
         line: event.line.getLine(),
@@ -476,6 +540,84 @@ export default {
         line: event.line.getLine(),
         nativeEvent: event,
       });
+    },
+    /**
+     * 滚轮或触摸滑动时登记手动滚动，并重置滚动静止定时器。
+     *
+     * AMLL 只在当前播放行发生变化、该行仍在渲染范围内、且滚动结束已超过
+     * 500 毫秒时才恢复自动对齐，用户滚得太远就再也回不到正在播放的那一行，
+     * 因此这里自己安排一次回归。
+     */
+    handleScrollInput() {
+      // 滚动输入发生说明指针已经落在歌词区域里，鼠标离开的倒计时不再成立
+      this.clearMouseLeaveResumeTimer();
+      this.manualScrolled = true;
+      this.clearScrollIdleResumeTimer();
+      this.scrollIdleResumeTimer = window.setTimeout(
+        this.handleScrollIdleResumeTimer,
+        SCROLL_IDLE_RESUME_DELAY_MS
+      );
+    },
+    /** 指针进入歌词区域说明用户可能正在看歌词，取消鼠标离开后的回归 */
+    handleHostMouseEnter() {
+      this.clearMouseLeaveResumeTimer();
+    },
+    /** 指针离开歌词区域后开始倒计时，超时仍没有回来就翻回当前行 */
+    handleHostMouseLeave() {
+      this.clearMouseLeaveResumeTimer();
+      if (!this.manualScrolled) return;
+      this.mouseLeaveResumeTimer = window.setTimeout(
+        this.handleMouseLeaveResumeTimer,
+        MOUSE_LEAVE_RESUME_DELAY_MS
+      );
+    },
+    /** 鼠标离开歌词区域已超过等待时长，回到当前播放行 */
+    handleMouseLeaveResumeTimer() {
+      this.mouseLeaveResumeTimer = 0;
+      this.resumeAutoAlign();
+    },
+    /** 最后一次滚动输入之后已超过等待时长，回到当前播放行 */
+    handleScrollIdleResumeTimer() {
+      this.scrollIdleResumeTimer = 0;
+      this.resumeAutoAlign();
+    },
+    /**
+     * 把视图翻回正在播放的那一行。
+     *
+     * resetScroll 只重置用户滚动状态与滚动偏移，不会触发布局重算，
+     * AMLL 内部的恢复路径同样是在它之后紧跟一次排版计算，
+     * 少了这一步视图会停在原来的偏移上。
+     */
+    resumeAutoAlign() {
+      this.clearMouseLeaveResumeTimer();
+      this.clearScrollIdleResumeTimer();
+      if (!this.manualScrolled) return;
+      this.manualScrolled = false;
+      if (!this.player || this.lines.length === 0) return;
+      this.player.resetScroll();
+      this.player.calcLayout('playback-tick');
+    },
+    /**
+     * 清掉两个等待定时器并复位手动滚动标记。
+     *
+     * 歌词批次更新、点击歌词行跳转、歌词页隐藏、组件销毁这些时机下，
+     * 手动滚动状态都已经失效，而宿主不可见时触发排版计算会把歌词行
+     * 按错误的高度排布，因此这里不调用播放器上的任何方法。
+     */
+    cleanupManualScroll() {
+      this.clearMouseLeaveResumeTimer();
+      this.clearScrollIdleResumeTimer();
+      this.manualScrolled = false;
+    },
+    clearMouseLeaveResumeTimer() {
+      if (!this.mouseLeaveResumeTimer) return;
+      clearTimeout(this.mouseLeaveResumeTimer);
+      this.mouseLeaveResumeTimer = 0;
+    },
+    clearScrollIdleResumeTimer() {
+      if (!this.scrollIdleResumeTimer) return;
+      clearTimeout(this.scrollIdleResumeTimer);
+      this.scrollIdleResumeTimer = 0;
     },
   },
 };
