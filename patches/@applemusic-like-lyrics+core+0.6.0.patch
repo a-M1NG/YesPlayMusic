@@ -1,8 +1,8 @@
 diff --git a/node_modules/@applemusic-like-lyrics/core/dist/amll-core.mjs b/node_modules/@applemusic-like-lyrics/core/dist/amll-core.mjs
-index b38e570..358f501 100644
+index b38e570..d8eb4c8 100644
 --- a/node_modules/@applemusic-like-lyrics/core/dist/amll-core.mjs
 +++ b/node_modules/@applemusic-like-lyrics/core/dist/amll-core.mjs
-@@ -6133,23 +6133,31 @@ function computeDotFraction(startDelay, duration, internalMs, target) {
+@@ -6133,30 +6133,45 @@ function computeDotFraction(startDelay, duration, internalMs, target) {
  //#region src/lyric-player/dom/interlude-dots.ts
  var InterludeDotsEl = class extends InterludeDotsBase {
  	element = document.createElement("div");
@@ -38,8 +38,12 @@ index b38e570..358f501 100644
  		this.dot0.style.opacity = snapshot.dotOpacities[0].toFixed(3);
  		this.dot1.style.opacity = snapshot.dotOpacities[1].toFixed(3);
  		this.dot2.style.opacity = snapshot.dotOpacities[2].toFixed(3);
-@@ -6157,6 +6165,10 @@ var InterludeDotsEl = class extends InterludeDotsBase {
- 			this.element.setAttribute("style", curStyle);
+ 		if (this.lastStyle !== curStyle) {
+-			this.element.setAttribute("style", curStyle);
++			// 逐个属性写入：setAttribute 会连带清掉宿主写在元素上的行内过渡，
++			// 滚动期间用来摘掉位移过渡的那份列表会被每帧抹掉
++			this.element.style.transform = `translate(${left.toFixed(2)}px, ${top.toFixed(2)}px)`;
++			this.element.style.opacity = snapshot.opacity.toFixed(3);
  			this.lastStyle = curStyle;
  		}
 +		if (this.lastDotsStyle !== dotsStyle) {
@@ -49,7 +53,7 @@ index b38e570..358f501 100644
  	}
  	dispose() {
  		super.dispose();
-@@ -6592,15 +6604,12 @@ var LineBalancer = class {
+@@ -6592,15 +6607,12 @@ var LineBalancer = class {
  		adapter.resetDOM();
  		const prevWhiteSpace = this.mainElement.style.whiteSpace;
  		this.mainElement.style.whiteSpace = "nowrap";
@@ -70,7 +74,7 @@ index b38e570..358f501 100644
  		}
  		let lockAcquired = false;
  		try {
-@@ -6633,7 +6642,7 @@ var LineBalancer = class {
+@@ -6633,7 +6645,7 @@ var LineBalancer = class {
  			this.isBalancing = false;
  		} finally {
  			this.mainElement.style.whiteSpace = prevWhiteSpace;
@@ -79,7 +83,7 @@ index b38e570..358f501 100644
  			if (lockAcquired) this.isBalancing = false;
  		}
  	}
-@@ -7421,11 +7430,13 @@ var LyricLineEl = class extends LyricLineBase {
+@@ -7421,11 +7433,13 @@ var LyricLineEl = class extends LyricLineBase {
  		}
  	}
  	rebuildStyle() {

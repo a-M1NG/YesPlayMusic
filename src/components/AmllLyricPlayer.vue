@@ -35,6 +35,52 @@ const MOUSE_LEAVE_RESUME_DELAY_MS = 3000;
 const SCROLL_IDLE_RESUME_DELAY_MS = 10000;
 
 /**
+ * 位置由 JS 逐帧驱动时，歌词行容器要写的过渡列表。
+ *
+ * 取容器在关闭弹簧动画时的过渡列表去掉 transform，透明度与模糊的过渡保持原样。
+ * 为什么必须去掉 transform，见 holdLineTransitions。
+ */
+const DIRECT_MOTION_LINE_TRANSITION =
+  'opacity 0.4s ease, filter 0.4s ease, background-color 0.25s ease';
+
+/**
+ * 位置由 JS 逐帧驱动时，间奏圆点容器要写的过渡列表。
+ *
+ * 同样取圆点容器在关闭弹簧动画时的过渡列表去掉 transform。圆点容器的透明度由
+ * 演出按时间算出、不经过过渡，因此这份列表里没有 opacity。
+ */
+const DIRECT_MOTION_DOTS_TRANSITION =
+  'filter 0.25s, background-color 0.25s, box-shadow 0.25s';
+
+/**
+ * 归位补间的时长下限，单位为毫秒。
+ *
+ * 距离很短时也要让用户看出这是一次平移，不能一闪就到位。
+ */
+const RETURN_SCROLL_MIN_DURATION_MS = 260;
+
+/**
+ * 归位补间的时长上限，单位为毫秒。
+ *
+ * 距离再远也要在这个时长内走完，否则挡住歌词的时间过长。
+ */
+const RETURN_SCROLL_MAX_DURATION_MS = 700;
+
+/**
+ * 归位补间的基础时长，单位为毫秒。
+ *
+ * 每像素距离在这个基础之上再折算时长，见 RETURN_SCROLL_DURATION_PER_PX。
+ */
+const RETURN_SCROLL_BASE_DURATION_MS = 150;
+
+/**
+ * 每像素距离折算的时长，单位为毫秒。
+ *
+ * 滚动得越远需要走的距离越长，时长按这个系数随距离增长。
+ */
+const RETURN_SCROLL_DURATION_PER_PX = 0.16;
+
+/**
  * 滚动输入监听的选项。
  *
  * 滚动输入监听只登记用户滚动过这个事实，不阻止默认行为；
@@ -168,7 +214,7 @@ export default {
       if (!this.player) return;
       this.player.setLyricLines(lines, this.getCurrentTime());
       // 换歌时所有歌词行都是新建的，入位同样不能带过渡
-      this.holdEnteringLines(this.player, true);
+      this.holdLineTransitions(this.player, true);
       this.player.update(0);
       // 没有歌词行时逐帧循环没有任何可以推进的内容
       if (!lines.length) {
@@ -220,7 +266,7 @@ export default {
     disabled(disabled) {
       if (disabled) {
         // 宿主已经不可见，此时触发排版计算只会照着 0 高度去排，
-        // 因此这里只把定时器与手动滚动状态清掉，不碰播放器实例
+        // 因此这里只把定时器、手动滚动状态与归位补间清掉，不触发排版计算
         this.cleanupManualScroll();
         // 整页关闭会把宿主置成 display:none，AMLL 会把歌词行高度写成 0 并取消观察，
         // 这种情况下重新启用必须整体重建，否则这些行不会再回到 DOM。
@@ -250,10 +296,10 @@ export default {
     this.player = null;
     this.frameId = 0;
     this.lastFrameTime = -1;
-    // 入位保护还需要持续的帧数，含义见 holdEnteringLines
+    // 入位保护还需要持续的帧数，含义见 holdLineTransitions
     this.holdFrames = 0;
-    // 已经被写过内联 transition 的歌词行元素，含义见 holdEnteringLines
-    this.heldElements = new Set();
+    // 已经被写过内联过渡的容器元素，值为写上去的过渡列表，含义见 holdLineTransitions
+    this.heldElements = new Map();
     // 当前这批歌词行是否带词级时间信息，决定播放进度变量要不要写
     this.wordLevel = false;
     // 距离下一次写入播放进度变量还差几次
@@ -275,6 +321,8 @@ export default {
     this.mouseLeaveResumeTimer = 0;
     // 最后一次滚动输入之后等待自动回归的定时器
     this.scrollIdleResumeTimer = 0;
+    // 正在进行的归位补间，由帧循环逐帧推进，null 表示当前没有归位
+    this.returnScroll = null;
   },
   mounted() {
     const player = new LyricPlayer();
@@ -316,7 +364,7 @@ export default {
     host.addEventListener('mouseleave', this.handleHostMouseLeave);
 
     player.setLyricLines(this.lines, this.getCurrentTime());
-    this.holdEnteringLines(player, true);
+    this.holdLineTransitions(player, true);
     if (this.playing) player.resume();
     else player.pause();
 
@@ -349,7 +397,7 @@ export default {
       // 重建会重新定位全部歌词行，让紧随其后的 update 立刻写入播放进度变量
       this.playerTimePending = PLAYER_TIME_WRITE_INTERVAL - 1;
       // 重建会把所有歌词行重新放回页面，入位同样不能带过渡
-      this.holdEnteringLines(this.player, true);
+      this.holdLineTransitions(this.player, true);
       this.player.update(0);
     },
     startFrameLoop() {
@@ -376,7 +424,13 @@ export default {
       // 高刷新率屏幕也按目标帧率更新；暂停时保留 15 FPS 响应拖动与滚动。
       const interval = 1000 / (this.playing ? Math.max(1, this.fps) : 15);
       const pausedSeek = !this.playing && time !== this.lastPushedTime;
-      if (this.lastFrameTime !== -1 && delta < interval - 1 && !pausedSeek) {
+      // 归位补间要逐帧推进并把位移写进 DOM，暂停时那套 15 FPS 节流会把它拖慢
+      if (
+        this.lastFrameTime !== -1 &&
+        delta < interval - 1 &&
+        !pausedSeek &&
+        !this.returnScroll
+      ) {
         this.frameId = requestAnimationFrame(this.handleFrame);
         return;
       }
@@ -389,9 +443,24 @@ export default {
         player.setCurrentTime(time);
         this.syncPausedInterlude(player, interlude, time);
       }
+      // 归位补间排在这里推进：setCurrentTime 可能触发一次带逐行延迟的播放排版，
+      // 补间用的连续滚动排版不带延迟、当帧把位置写死，这一次重算会把上面那些
+      // 延迟目标整个覆盖掉，update 写进 DOM 的就是补间位置，不会出现一行按
+      // 延迟目标停在旧位置而另一行已经走掉的那一帧。
+      const tween = this.returnScroll;
+      if (tween) {
+        const progress = Math.min(
+          1,
+          (frameTime - tween.startedAt) / tween.duration
+        );
+        const eased = progress * progress * (3 - 2 * progress);
+        player.scrollEngine.offset = tween.offset * (1 - eased);
+        player.calcLayout('continuous-scroll');
+        if (progress >= 1) this.returnScroll = null;
+      }
       // update 必须逐帧调用：滚动、窗口尺寸变化引起的排版都由它写进 DOM。
       // 暂停期间跳过它会让歌词列表不再响应拖动。
-      this.holdEnteringLines(player);
+      this.holdLineTransitions(player);
       player.update(delta);
       this.frameId = requestAnimationFrame(this.handleFrame);
     },
@@ -469,12 +538,20 @@ export default {
       this.playerSetProperty = null;
     },
     /**
-     * 歌词行回到页面上时，位移要等这一帧的样式提交才会写入，
-     * 这中间浏览器已经按没有位移的样子算过一次样式，关闭弹簧动画时
-     * 用于补位的 transition 会把这次入位当成一次位移过渡，
-     * 歌词从容器顶部滑到自己的位置，页面上方因此闪过一行歌词。
-     * 这里在歌词行入位以及整体重建后排版还在调整的这几帧里先关掉过渡，
-     * 等位置定下来再交还给样式表。
+     * 位置不该由样式表的过渡承担时，给容器写一份去掉 transform 的过渡列表。
+     *
+     * 两种情况需要这样做：
+     *
+     * 1. 歌词行刚回到页面上。它的位移要等这一帧的样式提交才会写入，这中间浏览器
+     *    已经按没有位移的样子算过一次样式，样式表里的 `transform` 过渡会把这次
+     *    入位当成一次位移过渡，歌词行从容器顶部滑到自己的位置，页面上方因此闪过
+     *    一行歌词。
+     * 2. 位置正由 JS 逐帧驱动：滚动交互进行中（惯性滑动阶段也算），或者归位补间
+     *    进行中。关闭弹簧动画时样式表给歌词行容器与圆点容器挂了 `transform 0.5s`，
+     *    位置一帧改写一次，这条过渡就一帧重启一次，渲染出来的位置因此落后 JS 记录
+     *    的位置约一秒的距离。AMLL 判断一行该不该留在 DOM 里用的正是 JS 位置
+     *    （`isInRenderRange` → `hide()` 直接摘掉元素），滞后会让行在画面里被移出
+     *    DOM，重新进入范围时又一步跳到终点、压在还没走完的邻行上。
      *
      * 保护窗口结束后只剩被写过过渡的元素需要收尾，用集合记住它们即可，
      * 不必再遍历全部歌词行。
@@ -482,41 +559,52 @@ export default {
      * @param {object} player AMLL 歌词播放器实例
      * @param {boolean} force 是否重新开始入位保护，用于整体重建这种一次定位全部歌词行的场合
      */
-    holdEnteringLines(player, force = false) {
+    holdLineTransitions(player, force = false) {
       if (force) {
         this.holdFrames = 3;
         // 整体重建会把旧的歌词行元素整批丢弃，集合里留下的引用再也回不来
         this.heldElements.clear();
       }
-      const holding = this.holdFrames > 0;
-      if (holding) this.holdFrames -= 1;
+      const directMotion =
+        Boolean(player.scrollEngine?.isInteracting) ||
+        this.returnScroll !== null;
+      const holding = this.holdFrames > 0 || directMotion;
+      if (this.holdFrames > 0) this.holdFrames -= 1;
       const held = this.heldElements;
       if (!holding && held.size === 0) return;
       let written = null;
-      const apply = element => {
-        const needsHold =
-          holding || !element.parentElement || !element.style.transform;
-        if (needsHold) {
-          if (element.style.transition !== 'none') {
-            element.style.transition = 'none';
-            if (element.isConnected) written = element;
-          }
-          held.add(element);
-          return;
+      const hold = (element, transition) => {
+        if (element.style.transition !== transition) {
+          element.style.transition = transition;
+          if (element.isConnected) written = element;
         }
+        held.set(element, transition);
+      };
+      const release = element => {
         if (element.style.transition) {
           element.style.transition = '';
           if (element.isConnected) written = element;
         }
         held.delete(element);
       };
+      const apply = (element, transition) => {
+        const needsHold =
+          holding || !element.parentElement || !element.style.transform;
+        if (needsHold) hold(element, transition);
+        else release(element);
+      };
       if (holding) {
         for (const group of player.currentLyricGroups) {
-          if (group.element) apply(group.element);
+          if (group.element) {
+            apply(group.element, DIRECT_MOTION_LINE_TRANSITION);
+          }
         }
+        // 圆点容器与歌词行容器共用同一条样式表规则，滚动时位置同样要跟住内容
+        const dotsElement = player.interludeDots?.getElement?.();
+        if (dotsElement) apply(dotsElement, DIRECT_MOTION_DOTS_TRANSITION);
       } else {
         // 只处理写过的元素；删掉元素不会影响本次遍历的其余条目
-        for (const element of held) apply(element);
+        for (const [element, transition] of held) apply(element, transition);
       }
       // 先让浏览器按当前位移算一次样式，交还过渡后起点才会是当前位置。
       // 读发生写入的那个元素本身即可，读宿主元素会把整棵歌词子树连带算进来
@@ -549,6 +637,13 @@ export default {
      * 因此这里自己安排一次回归。
      */
     handleScrollInput() {
+      // 用户重新滚动，正在进行的归位补间到此为止
+      const returning = this.returnScroll !== null;
+      this.cancelReturnScroll();
+      // 补间期间焦点已经切回当前播放行、挂起标记也被清掉，用户重新滚动要把它设回来，
+      // 免得播放换行时视图自己走掉。滚轮路径 AMLL 自己会设，触摸路径要等移动超过
+      // 10 像素才设，这里补上
+      if (returning) this.player.scrollState.isAutoAlignSuspended = true;
       // 滚动输入发生说明指针已经落在歌词区域里，鼠标离开的倒计时不再成立
       this.clearMouseLeaveResumeTimer();
       this.manualScrolled = true;
@@ -584,9 +679,10 @@ export default {
     /**
      * 把视图翻回正在播放的那一行。
      *
-     * resetScroll 只重置用户滚动状态与滚动偏移，不会触发布局重算，
-     * AMLL 内部的恢复路径同样是在它之后紧跟一次排版计算，
-     * 少了这一步视图会停在原来的偏移上。
+     * 用户滚动留下的偏移量记在滚动引擎上，AMLL 的排版再按这个偏移把整层歌词
+     * 一起平移，因此归位就是把这个偏移补间回零。排版理由取连续滚动，
+     * 它关掉逐行延迟并让每行的位置当帧落到算出的值上，全部歌词行拿到的是
+     * 同一个纵向平移量，行与行之间不会错位，两种弹簧模式也走同一条路径。
      */
     resumeAutoAlign() {
       this.clearMouseLeaveResumeTimer();
@@ -594,19 +690,76 @@ export default {
       if (!this.manualScrolled) return;
       this.manualScrolled = false;
       if (!this.player || this.lines.length === 0) return;
-      this.player.resetScroll();
-      this.player.calcLayout('playback-tick');
+      // 用户滚了又滚回原位，没有可走的距离，不必重算排版
+      if (Math.abs(this.player.scrollEngine.offset) < 1) return;
+      this.startReturnScroll();
+    },
+    /**
+     * 开始一次归位补间。
+     *
+     * 偏移量每减一像素整层歌词就下移一像素，补到零歌词行就回到当前播放行。
+     * 补间的起点由归位后的落位反推：先按目标排版算一次落位，它与当前落位的
+     * 差值就是视图此刻的偏移。这两次排版计算之间不调用 update，结果没有写进 DOM，
+     * 画面仍然停在原处。
+     *
+     * 补间只在这里建立状态，逐帧推进交给帧循环（见 handleFrame）：独立注册的
+     * 帧回调与帧循环的先后次序不确定，排在帧循环之后时那一帧写进 DOM 的会是
+     * 播放排版的逐行延迟目标，交给帧循环推进才能保证每帧先算补间再写 DOM。
+     */
+    startReturnScroll() {
+      const player = this.player;
+      const scrollEngine = player?.scrollEngine;
+      const index = player?.timelineController?.getSnapshot?.().scrollToIndex;
+      const group = player?.currentLyricGroups?.[index];
+      if (!scrollEngine || !group) {
+        this.player.resetScroll();
+        this.player.calcLayout('playback-tick');
+        return;
+      }
+      const startY = group.posY.getCurrentPosition();
+      player.resetScroll();
+      player.calcLayout('continuous-scroll');
+      const endY = group.posY.getCurrentPosition();
+      const startOffset = endY - startY;
+      if (Math.abs(startOffset) < 1) return;
+      // 按反推出的偏移重写一次，起点与画面上的位置一致
+      scrollEngine.offset = startOffset;
+      player.calcLayout('continuous-scroll');
+      this.returnScroll = {
+        offset: startOffset,
+        startedAt: performance.now(),
+        duration: Math.min(
+          RETURN_SCROLL_MAX_DURATION_MS,
+          Math.max(
+            RETURN_SCROLL_MIN_DURATION_MS,
+            RETURN_SCROLL_BASE_DURATION_MS +
+              Math.abs(startOffset) * RETURN_SCROLL_DURATION_PER_PX
+          )
+        ),
+      };
+    },
+    /**
+     * 取消正在进行的归位补间。
+     *
+     * 偏移留在取消时的位置上，AMLL 接着这个偏移处理后续的滚动输入，画面不会回跳。
+     */
+    cancelReturnScroll() {
+      this.returnScroll = null;
     },
     /**
      * 清掉两个等待定时器并复位手动滚动标记。
      *
-     * 歌词批次更新、点击歌词行跳转、歌词页隐藏、组件销毁这些时机下，
-     * 手动滚动状态都已经失效，而宿主不可见时触发排版计算会把歌词行
-     * 按错误的高度排布，因此这里不调用播放器上的任何方法。
+     * 歌词批次更新、点击歌词行跳转、歌词页隐藏、组件销毁这些时机下，手动滚动状态
+     * 都已经失效，正在进行的归位补间也要停下；补间被打断时视图停在半路，
+     * 此时把滚动偏移交回自动归位。resetScroll 只改滚动状态与挂起标记、不做排版计算，
+     * 宿主不可见时调用也安全。
      */
     cleanupManualScroll() {
+      const returning = this.returnScroll !== null;
       this.clearMouseLeaveResumeTimer();
       this.clearScrollIdleResumeTimer();
+      this.cancelReturnScroll();
+      if (returning) this.player?.resetScroll();
       this.manualScrolled = false;
     },
     clearMouseLeaveResumeTimer() {
