@@ -17,20 +17,24 @@
             !settings.lowResourceMode,
         }"
       >
-        <div
-          class="top-right"
-          :style="{ backgroundImage: `url(${bgImageUrl})` }"
-        />
-        <div
-          class="bottom-left"
-          :style="{ backgroundImage: `url(${bgImageUrl})` }"
-        />
+        <FadeImage class="top-right" :src="bgImageUrl" />
+        <FadeImage class="bottom-left" :src="bgImageUrl" />
       </div>
       <div
         v-if="settings.lyricsBackground === true"
         class="gradient-background"
-        :style="{ background }"
-      ></div>
+      >
+        <div
+          class="gradient-layer"
+          :class="{ 'is-visible': gradientLayer === 0 }"
+          :style="{ background: layerBackgrounds[0] }"
+        ></div>
+        <div
+          class="gradient-layer"
+          :class="{ 'is-visible': gradientLayer === 1 }"
+          :style="{ background: layerBackgrounds[1] }"
+        ></div>
+      </div>
       <!-- 隐藏或最小化时不销毁渲染器，只靠 playing 停掉渲染循环，
            否则恢复窗口时画布要重新初始化，会黑一下 -->
       <AmllBackgroundRender
@@ -49,11 +53,13 @@
           </div>
           <div class="cover">
             <div class="cover-container">
-              <img :src="imageUrl" loading="lazy" />
-              <div
-                class="shadow"
-                :style="{ backgroundImage: `url(${imageUrl})` }"
-              ></div>
+              <div class="cover-image">
+                <FadeImage :src="imageUrl" @load="onCoverLoad" />
+              </div>
+              <div class="shadow">
+                <FadeImage :src="imageUrl" @load="onCoverLoad" />
+              </div>
+              <LoadingSpinner v-if="coverLoading && hasCoverImage" />
             </div>
           </div>
           <div class="controls">
@@ -308,6 +314,8 @@ import VueSlider from 'vue-slider-component';
 import AmllBackgroundRender from '@/components/AmllBackgroundRender.vue';
 import AmllLyricPlayer from '@/components/AmllLyricPlayer.vue';
 import ContextMenu from '@/components/ContextMenu.vue';
+import FadeImage from '@/components/FadeImage.vue';
+import LoadingSpinner from '@/components/LoadingSpinner.vue';
 import { formatTrackTime } from '@/utils/common';
 import { getLyric, getCloudLyric } from '@/api/track';
 import { copyLyric } from '@/utils/lyrics';
@@ -323,12 +331,17 @@ import { isAccountLoggedIn } from '@/utils/auth';
 import { hasListSource, getListSourcePath } from '@/utils/playList';
 import locale from '@/locale';
 
+// 渐变背景两层之间的过渡时长，与 .gradient-layer 的 opacity transition 保持一致
+const GRADIENT_FADE_DURATION = 500;
+
 export default {
   name: 'Lyrics',
   components: {
     VueSlider,
     ButtonIcon,
     ContextMenu,
+    FadeImage,
+    LoadingSpinner,
     AmllLyricPlayer,
     AmllBackgroundRender,
   },
@@ -346,7 +359,17 @@ export default {
       hasTranslation: false,
       hasRomanization: false,
       lyricType: 'translation', // or 'romaPronunciation'
-      background: '',
+      // 两层渐变各自的取值，以及当前可见的那一层；新配色写进另一层再切换
+      layerBackgrounds: ['', ''],
+      gradientLayer: 0,
+      // 本轮渐变两层过渡的结束时刻，早于它到达的新配色要排队等待
+      gradientFadeEndTime: 0,
+      // 两层之间靠透明度过渡，需要等一次重绘，过渡结束前先撤掉上一次的定时器
+      gradientSwapTimer: null,
+      // 封面大图是否尚未就绪，用于在封面区域显示加载动画
+      coverLoading: false,
+      // 加载动画等待的封面地址，图片就绪时据此判断是否可以收起
+      pendingCoverUrl: '',
       date: this.formatTime(new Date()),
       isFullscreen: !!document.fullscreenElement,
       rightClickLyric: null,
@@ -370,8 +393,20 @@ export default {
     imageUrl() {
       return this.player.currentTrack?.al?.picUrl + '?param=1024y1024';
     },
+    /** 当前曲目是否有封面图，没有封面时不必显示加载动画 */
+    hasCoverImage() {
+      return Boolean(this.player.currentTrack?.al?.picUrl);
+    },
     bgImageUrl() {
       return this.player.currentTrack?.al?.picUrl + '?param=512y512';
+    },
+    /**
+     * 当前应当显示的渐变背景。
+     *
+     * 新配色尚未算出时仍然是上一组，切歌瞬间不会闪回没有背景的状态。
+     */
+    currentBackground() {
+      return this.layerBackgrounds[this.gradientLayer];
     },
     isShowLyricTypeSwitch() {
       return this.hasRomanization && this.hasTranslation;
@@ -421,7 +456,10 @@ export default {
         this.lyricLoading = false;
         this.coverRequestToken += 1;
         this.coverImage = null;
-        this.background = '';
+        // 两首歌共用一张封面时图层组件不会重新加载，加载动画需要记录自己等待的
+        // 地址，只有该地址就绪才收起，避免一直转下去
+        this.pendingCoverUrl = this.imageUrl;
+        this.coverLoading = this.hasCoverImage;
         this.setLyric([]);
       }
       if (this.active) {
@@ -451,6 +489,9 @@ export default {
     this.lyricLoading = false;
     this.coverImage = null;
     this.coverRequestToken = 0;
+    // 首次进入页面时封面同样要等加载完成，加载动画等待的就是当前这首曲目的封面
+    this.pendingCoverUrl = this.imageUrl;
+    this.coverLoading = this.hasCoverImage;
     this.getLyric();
     this.getCoverColor();
     this.initDate();
@@ -460,6 +501,10 @@ export default {
   beforeDestroy: function () {
     if (this.timer) {
       clearInterval(this.timer);
+    }
+    if (this.gradientSwapTimer) {
+      clearTimeout(this.gradientSwapTimer);
+      this.gradientSwapTimer = null;
     }
     // 组件销毁后到达的歌词结果没有可以提交的对象
     this.lyricRequestToken += 1;
@@ -671,12 +716,51 @@ export default {
           const originColor = Color.rgb(palette.DarkMuted._rgb);
           const color = originColor.darken(0.1).rgb().string();
           const color2 = originColor.lighten(0.28).rotate(-30).rgb().string();
-          this.background = `linear-gradient(to top left, ${color}, ${color2})`;
+          this.applyBackground(
+            `linear-gradient(to top left, ${color}, ${color2})`
+          );
         })
         .catch(error => {
           if (this.coverRequestToken === requestToken) this.coverImage = null;
           console.debug('[lyrics] cover color unavailable', error);
         });
+    },
+    /**
+     * 切换渐变背景。
+     *
+     * background 的取值无法参与过渡，因此把新配色先写进尚未显示的图层，等一次
+     * 重绘之后再切换可见图层，两层交叠出透明度过渡；旧配色在过渡期间一直留在
+     * 下层，画面不会退回纯色底。
+     *
+     * 上一轮渐变还在进行时两层都处于半透明状态，此刻改写任何一层都会硬切，所以
+     * 先排队等到本轮结束再写；排队期间又来了新配色会先撤掉这次排队。
+     */
+    applyBackground(gradient) {
+      const delay = this.gradientFadeEndTime - Date.now();
+      if (delay > 0) {
+        if (this.gradientSwapTimer) clearTimeout(this.gradientSwapTimer);
+        this.gradientSwapTimer = setTimeout(() => {
+          this.gradientSwapTimer = null;
+          if (this._isDestroyed) return;
+          this.applyBackground(gradient);
+        }, delay);
+        return;
+      }
+      if (gradient === this.currentBackground) return;
+      if (this.gradientSwapTimer) clearTimeout(this.gradientSwapTimer);
+      const nextLayer = this.gradientLayer === 0 ? 1 : 0;
+      this.$set(this.layerBackgrounds, nextLayer, gradient);
+      this.gradientSwapTimer = setTimeout(() => {
+        this.gradientSwapTimer = null;
+        if (this._isDestroyed) return;
+        this.gradientLayer = nextLayer;
+        // 记下本轮渐变的结束时刻，更早到达的新配色要等它走完
+        this.gradientFadeEndTime = Date.now() + GRADIENT_FADE_DURATION;
+      }, 20);
+    },
+    /** 封面大图就绪，收起加载动画 */
+    onCoverLoad(src) {
+      if (src === this.pendingCoverUrl) this.coverLoading = false;
     },
     hasList() {
       return hasListSource();
@@ -726,9 +810,17 @@ export default {
     z-index: 0;
     width: 140vw;
     height: 140vw;
-    opacity: 0.6;
     position: absolute;
-    background-size: cover;
+
+    // 半透明效果交给图层，两个块本身保持完全不透明：opacity 会在块上建立
+    // 层叠上下文，top-right 的 mix-blend-mode 会因此失去可以混合的下层内容
+    ::v-deep .fade-image-layer {
+      opacity: 0;
+
+      &.is-visible {
+        opacity: 0.6;
+      }
+    }
   }
 
   .top-right {
@@ -763,6 +855,19 @@ export default {
   position: absolute;
   height: 100vh;
   width: 100vw;
+
+  // 两层叠放：隐藏层保留上一组配色，可见层承载新配色并淡入
+  .gradient-layer {
+    position: absolute;
+    height: 100vh;
+    width: 100vw;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+
+    &.is-visible {
+      opacity: 1;
+    }
+  }
 }
 
 .left-side {
@@ -926,14 +1031,21 @@ export default {
 
   .cover-container {
     position: relative;
+    width: 54vh;
+    height: 54vh;
+    // 封面的圆角放在图层内部，图层切换时圆角不会跟着变化
+    border-radius: 0.75em;
   }
 
-  img {
-    border-radius: 0.75em;
+  .cover-image {
     width: 54vh;
     height: 54vh;
     user-select: none;
-    object-fit: cover;
+
+    ::v-deep .fade-image-layer {
+      border-radius: 0.75em;
+      overflow: hidden;
+    }
   }
 
   .shadow {
@@ -941,11 +1053,10 @@ export default {
     top: 12px;
     height: 54vh;
     width: 54vh;
+    // blur 留在容器上，图层切换只改透明度，投影的模糊程度不会随之变化
     filter: blur(16px) opacity(0.6);
     transform: scale(0.92, 0.96);
     z-index: -1;
-    background-size: cover;
-    border-radius: 0.75em;
   }
 }
 
