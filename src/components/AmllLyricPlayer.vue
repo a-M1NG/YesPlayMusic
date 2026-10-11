@@ -421,15 +421,20 @@ export default {
       const delta =
         this.lastFrameTime === -1 ? 0 : frameTime - this.lastFrameTime;
       const time = this.getCurrentTime();
-      // 高刷新率屏幕也按目标帧率更新；暂停时保留 15 FPS 响应拖动与滚动。
+      // 滚动交互进行中（惯性滑动阶段也算）与归位补间进行中，位置由 JS 逐帧给出，
+      // 这两段时间必须按屏幕刷新率更新：暂停时那套 15 FPS 会把每一步位置都留在画面上，
+      // 滚动看着一格一格跳
+      const directMotion =
+        Boolean(player.scrollEngine?.isInteracting) ||
+        this.returnScroll !== null;
+      // 高刷新率屏幕也按目标帧率更新；暂停时其余场合保留 15 FPS 响应拖动与滚动。
       const interval = 1000 / (this.playing ? Math.max(1, this.fps) : 15);
       const pausedSeek = !this.playing && time !== this.lastPushedTime;
-      // 归位补间要逐帧推进并把位移写进 DOM，暂停时那套 15 FPS 节流会把它拖慢
       if (
         this.lastFrameTime !== -1 &&
         delta < interval - 1 &&
         !pausedSeek &&
-        !this.returnScroll
+        !directMotion
       ) {
         this.frameId = requestAnimationFrame(this.handleFrame);
         return;
