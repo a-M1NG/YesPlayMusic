@@ -74,6 +74,11 @@ export default {
       type: Boolean,
       default: false,
     },
+    /** 歌词页是否处于整页关闭状态，用于区分整页关闭与最小化一类的隐藏 */
+    pageClosed: {
+      type: Boolean,
+      default: false,
+    },
     fps: {
       type: Number,
       default: 60,
@@ -189,15 +194,23 @@ export default {
     },
     disabled(disabled) {
       if (disabled) {
+        // 整页关闭会把宿主置成 display:none，AMLL 会把歌词行高度写成 0 并取消观察，
+        // 这种情况下重新启用必须整体重建，否则这些行不会再回到 DOM。
+        if (this.pageClosed) this.needsRebuildOnEnable = true;
         this.stopFrameLoop();
         return;
       }
-      // 实例与歌词元素都还在，位置由 AMLL 的 ResizeObserver → calcLayout(Resize)
-      // 与正常播放路径收敛；整体重建会把弹簧、滚动偏移与实测行高清零，
-      // 恢复时看起来像重载。
-      this.player?.onResize();
-      this.lastFrameTime = -1;
-      this.playerTimePending = PLAYER_TIME_WRITE_INTERVAL - 1;
+      if (this.needsRebuildOnEnable) {
+        this.needsRebuildOnEnable = false;
+        this.rebuildLayout();
+      } else {
+        // 实例与歌词元素都还在，位置由 AMLL 的 ResizeObserver → calcLayout(Resize)
+        // 与正常播放路径收敛；整体重建会把弹簧、滚动偏移与实测行高清零，
+        // 恢复时看起来像重载。
+        this.player?.onResize();
+        this.lastFrameTime = -1;
+        this.playerTimePending = PLAYER_TIME_WRITE_INTERVAL - 1;
+      }
       this.startFrameLoop();
     },
   },
@@ -226,6 +239,8 @@ export default {
     // 被接管的 style 对象与它原本的 setProperty，含义见 installPlayerTimeWrite
     this.playerTimeStyle = null;
     this.playerSetProperty = null;
+    // 本次停用是否由整页关闭造成，决定重新启用时要不要整体重建，含义见 disabled watcher
+    this.needsRebuildOnEnable = false;
   },
   mounted() {
     const player = new LyricPlayer();

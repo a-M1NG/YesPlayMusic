@@ -243,6 +243,8 @@
         <transition name="slide-fade">
           <div v-show="!noLyric" class="lyrics-container">
             <!-- 隐藏期间保留实例，靠 disabled 停掉帧循环，恢复时由组件做轻量重同步 -->
+            <!-- 关闭歌词页会把容器设成 display:none，AMLL 因此把歌词行高度写成 0 并取消观察，
+                 重开时这些行再也回不到 DOM，所以要让组件知道这次停用来自整页关闭 -->
             <AmllLyricPlayer
               v-if="!noLyric"
               ref="amllLyricPlayer"
@@ -250,6 +252,7 @@
               :time-source="getPlaybackTime"
               :playing="player.playing"
               :disabled="!active || noLyric"
+              :page-closed="!showLyrics"
               :fps="settings.lowResourceMode ? 30 : 60"
               :font-size="Number(settings.lyricFontSize) || 28"
               :align-position="Number(settings.amllAlignPosition) || 0.5"
@@ -352,7 +355,7 @@ export default {
     };
   },
   computed: {
-    ...mapState(['player', 'settings']),
+    ...mapState(['player', 'settings', 'showLyrics']),
     currentTrack() {
       return this.player.currentTrack;
     },
