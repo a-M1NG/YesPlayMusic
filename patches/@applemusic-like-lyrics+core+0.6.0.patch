@@ -1,8 +1,55 @@
 diff --git a/node_modules/@applemusic-like-lyrics/core/dist/amll-core.mjs b/node_modules/@applemusic-like-lyrics/core/dist/amll-core.mjs
-index b38e570..e54dec8 100644
+index b38e570..358f501 100644
 --- a/node_modules/@applemusic-like-lyrics/core/dist/amll-core.mjs
 +++ b/node_modules/@applemusic-like-lyrics/core/dist/amll-core.mjs
-@@ -6592,15 +6592,12 @@ var LineBalancer = class {
+@@ -6133,23 +6133,31 @@ function computeDotFraction(startDelay, duration, internalMs, target) {
+ //#region src/lyric-player/dom/interlude-dots.ts
+ var InterludeDotsEl = class extends InterludeDotsBase {
+ 	element = document.createElement("div");
++	// 缩放写在容器内部的一层元素上。圆点容器是歌词播放器根元素的直接子元素，
++	// 关闭弹簧动画时它被 `.disableSpring > *` 的 transform 过渡接管：逐帧写入的
++	// 位置需要这条 500 毫秒过渡来获得平滑位移，同一份 transform 里的缩放却会被
++	// 它拖慢，呼吸在极值附近因此先停滞再猛追，退场阶段的放大也到不了位
++	dots = document.createElement("div");
+ 	dot0 = document.createElement("span");
+ 	dot1 = document.createElement("span");
+ 	dot2 = document.createElement("span");
+ 	lastStyle = "";
++	lastDotsStyle = "";
+ 	constructor() {
+ 		super();
+ 		this.element.className = lyric_player_module_default.interludeDots;
+-		this.element.appendChild(this.dot0);
+-		this.element.appendChild(this.dot1);
+-		this.element.appendChild(this.dot2);
++		this.dots.appendChild(this.dot0);
++		this.dots.appendChild(this.dot1);
++		this.dots.appendChild(this.dot2);
++		this.element.appendChild(this.dots);
+ 		this.element.style.opacity = "0";
+ 	}
+ 	getElement() {
+ 		return this.element;
+ 	}
+ 	render(snapshot, left, top) {
+-		const curStyle = `transform:translate(${left.toFixed(2)}px, ${top.toFixed(2)}px) scale(${snapshot.scale.toFixed(4)});opacity:${snapshot.opacity.toFixed(3)}`;
++		const curStyle = `transform:translate(${left.toFixed(2)}px, ${top.toFixed(2)}px);opacity:${snapshot.opacity.toFixed(3)}`;
++		const dotsStyle = `transform:scale(${snapshot.scale.toFixed(4)})`;
+ 		this.dot0.style.opacity = snapshot.dotOpacities[0].toFixed(3);
+ 		this.dot1.style.opacity = snapshot.dotOpacities[1].toFixed(3);
+ 		this.dot2.style.opacity = snapshot.dotOpacities[2].toFixed(3);
+@@ -6157,6 +6165,10 @@ var InterludeDotsEl = class extends InterludeDotsBase {
+ 			this.element.setAttribute("style", curStyle);
+ 			this.lastStyle = curStyle;
+ 		}
++		if (this.lastDotsStyle !== dotsStyle) {
++			this.dots.setAttribute("style", dotsStyle);
++			this.lastDotsStyle = dotsStyle;
++		}
+ 	}
+ 	dispose() {
+ 		super.dispose();
+@@ -6592,15 +6604,12 @@ var LineBalancer = class {
  		adapter.resetDOM();
  		const prevWhiteSpace = this.mainElement.style.whiteSpace;
  		this.mainElement.style.whiteSpace = "nowrap";
@@ -23,7 +70,7 @@ index b38e570..e54dec8 100644
  		}
  		let lockAcquired = false;
  		try {
-@@ -6633,7 +6630,7 @@ var LineBalancer = class {
+@@ -6633,7 +6642,7 @@ var LineBalancer = class {
  			this.isBalancing = false;
  		} finally {
  			this.mainElement.style.whiteSpace = prevWhiteSpace;
@@ -32,7 +79,7 @@ index b38e570..e54dec8 100644
  			if (lockAcquired) this.isBalancing = false;
  		}
  	}
-@@ -7421,11 +7418,13 @@ var LyricLineEl = class extends LyricLineBase {
+@@ -7421,11 +7430,13 @@ var LyricLineEl = class extends LyricLineBase {
  		}
  	}
  	rebuildStyle() {
@@ -48,3 +95,23 @@ index b38e570..e54dec8 100644
  		}
  	}
  	rebuildElement() {
+diff --git a/node_modules/@applemusic-like-lyrics/core/dist/style.css b/node_modules/@applemusic-like-lyrics/core/dist/style.css
+index a3db199..b44a5d4 100644
+--- a/node_modules/@applemusic-like-lyrics/core/dist/style.css
++++ b/node_modules/@applemusic-like-lyrics/core/dist/style.css
+@@ -272,7 +272,14 @@
+   position: absolute;
+   left: 0;
+ 
+-  & > * {
++  /* 承载呼吸缩放的内层元素，排布与原先容器直接排布三个圆点时一致 */
++  & > div {
++    display: flex;
++    align-items: center;
++    gap: .18em;
++  }
++
++  & > div > * {
+     background-color: var(--amll-lp-color, white);
+     aspect-ratio: 1;
+     border-radius: 50%;
