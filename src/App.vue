@@ -19,11 +19,8 @@
     <ModalAddTrackToPlaylist v-if="isAccountLoggedIn" />
     <ModalNewPlaylist v-if="isAccountLoggedIn" />
     <transition v-if="enablePlayer" name="slide-up">
-      <Lyrics
-        v-if="lyricsMounted"
-        v-show="lyricsActive"
-        :active="lyricsActive"
-      />
+      <!-- 窗口可见性只经 :active 下发，元素不随最小化进入 display:none，恢复时不会重放上滑过渡，尺寸也不会归零 -->
+      <Lyrics v-if="lyricsMounted" v-show="showLyrics" :active="lyricsActive" />
     </transition>
   </div>
 </template>

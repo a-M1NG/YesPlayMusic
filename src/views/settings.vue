@@ -420,6 +420,15 @@
             <option value="36">
               {{ $t('settings.lyricFontSize.xlarge') }} - 36px
             </option>
+            <option value="44">
+              {{ $t('settings.lyricFontSize.xxlarge') }} - 44px
+            </option>
+            <option value="52">
+              {{ $t('settings.lyricFontSize.xxxlarge') }} - 52px
+            </option>
+            <option value="60">
+              {{ $t('settings.lyricFontSize.huge') }} - 60px
+            </option>
           </select>
         </div>
       </div>

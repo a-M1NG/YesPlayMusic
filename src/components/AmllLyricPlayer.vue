@@ -178,19 +178,26 @@ export default {
       this.player?.setWordFadeWidth(width);
     },
     fontSize() {
-      // 字号变化不会改变播放组件的尺寸，需要主动重新读取字号并重建视图
-      if (!this.player) return;
-      this.player.onResize();
-      this.rebuildLayout();
+      // 用户 watcher 的调度序号小于渲染 watcher，直接执行时宿主上的
+      // --amll-lp-font-size 还是旧值，要等样式落到 DOM 之后再量字号；
+      // 字号变了换行与行高都需要重算，因此这里仍然重建视图。
+      this.$nextTick(() => {
+        if (!this.player) return;
+        this.player.onResize();
+        this.rebuildLayout();
+      });
     },
     disabled(disabled) {
       if (disabled) {
         this.stopFrameLoop();
         return;
       }
-      // 隐藏期间歌词元素尺寸归零，排版窗口会被算到歌曲的其它位置，
-      // 重新显示时必须整体重建视图才能回到当前播放的行
-      this.rebuildLayout();
+      // 实例与歌词元素都还在，位置由 AMLL 的 ResizeObserver → calcLayout(Resize)
+      // 与正常播放路径收敛；整体重建会把弹簧、滚动偏移与实测行高清零，
+      // 恢复时看起来像重载。
+      this.player?.onResize();
+      this.lastFrameTime = -1;
+      this.playerTimePending = PLAYER_TIME_WRITE_INTERVAL - 1;
       this.startFrameLoop();
     },
   },

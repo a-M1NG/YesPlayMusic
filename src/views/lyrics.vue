@@ -242,8 +242,9 @@
       <div class="right-side">
         <transition name="slide-fade">
           <div v-show="!noLyric" class="lyrics-container">
+            <!-- 隐藏期间保留实例，靠 disabled 停掉帧循环，恢复时由组件做轻量重同步 -->
             <AmllLyricPlayer
-              v-if="active && !noLyric"
+              v-if="!noLyric"
               ref="amllLyricPlayer"
               :lines="lyricToShow"
               :time-source="getPlaybackTime"

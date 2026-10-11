@@ -50,9 +50,23 @@ export default {
       // 调用方传入的是播放状态与歌词页可见性的合成结果：画布被隐藏时绘制没有任何意义，
       // 停掉帧循环可以避免无谓的 GPU 提交；重新显示时 resume() 会立即请求下一帧，
       // 所以暂停期间不会漏掉需要重绘的内容
+      //
+      // 恢复之前必须先把渲染器的时间戳对齐到当前时刻：MeshGradientRenderer 暂停期间
+      // 帧循环直接返回，lastFrameTime 停留在暂停前的最后一帧，恢复后第一帧的
+      // frameDelta 就等于整段暂停时长，动画相位 frameTime 一次跨过整段空档，流动图案
+      // 跳到另一个角度。AMLL 的 IsolationRenderer 在 resume() 里调用 resetFrameClock()
+      // 把 lastFrameTime 与 lastTickTime 一起对齐到 performance.now()，这里照同样做法
+      // 手动对齐两个时间戳
       if (!this.background) return;
-      if (playing) this.background.resume();
-      else this.background.pause();
+      if (playing) {
+        const renderer = this.background.getRenderer();
+        const now = performance.now();
+        renderer.lastFrameTime = now;
+        renderer.lastTickTime = now;
+        this.background.resume();
+      } else {
+        this.background.pause();
+      }
     },
     hasLyric(hasLyric) {
       this.background?.setHasLyric(hasLyric);
